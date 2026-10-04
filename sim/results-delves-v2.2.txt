@@ -1,0 +1,29 @@
+DURF rules 2.2. Whole delves on the grid, 400 per cell, a fresh random starting character each.
+Cell = survived% / gold banked per delve / XP per delve (XP = gold returned + kills; a death banks nothing)
+Retreat is the book's: a second move at the same speed, no free attack.
+
+######## Depth 1 ########
+                              Dagger                Sword                 Sword+Light           Sword+Med+Shield      Bow+Light             
+Brave (fights everything)     18% / 039 / 044       21% / 041 / 047       31% / 057 / 069       56% / 047 / 072       81% / 128 / 165       
+Careful (flees big threats)   66% / 179 / 185       66% / 147 / 154       73% / 138 / 146       91% / 072 / 084       94% / 189 / 205       
+Careful + pushes              71% / 187 / 195       67% / 142 / 149       80% / 132 / 143       90% / 058 / 070       93% / 157 / 173       
+Coward (flees any hunter)     91% / 179 / 181       91% / 154 / 155       96% / 140 / 142       99% / 062 / 064       96% / 147 / 149       
+
+######## Depth 2 ########
+                              Dagger                Sword                 Sword+Light           Sword+Med+Shield      Bow+Light             
+Brave (fights everything)     05% / 018 / 019       07% / 022 / 025       10% / 027 / 031       16% / 019 / 026       48% / 084 / 107       
+Careful (flees big threats)   72% / 278 / 280       73% / 234 / 236       82% / 219 / 222       90% / 103 / 107       88% / 241 / 246       
+Careful + pushes              74% / 270 / 273       75% / 223 / 226       81% / 206 / 209       92% / 098 / 102       88% / 231 / 237       
+Coward (flees any hunter)     83% / 290 / 291       83% / 248 / 249       90% / 229 / 230       95% / 099 / 100       90% / 237 / 238       
+
+######## Depth 3 ########
+                              Dagger                Sword                 Sword+Light           Sword+Med+Shield      Bow+Light             
+Brave (fights everything)     03% / 011 / 012       04% / 017 / 018       04% / 018 / 020       07% / 014 / 018       38% / 079 / 100       
+Careful (flees big threats)   80% / 438 / 438       80% / 393 / 394       86% / 367 / 368       91% / 175 / 177       87% / 372 / 373       
+Careful + pushes              82% / 442 / 443       82% / 400 / 401       88% / 384 / 386       92% / 160 / 162       87% / 373 / 374       
+Coward (flees any hunter)     79% / 438 / 439       79% / 383 / 384       86% / 363 / 364       91% / 172 / 174       87% / 387 / 389       
+
+Depth 1 floors: 8.0 rooms, 4.9 lost items worth 469 GP in total; the careful bot returned 1.9 items (visited 5.3 rooms, saw 3.1 items, 0.8 slots free at the end)
+Depth 1, Careful (flees big threats), Sword+Light: endings Died=109 Home_done=156 Home_light=52 Home_hurt=3 Home_fled=79 Home_stuck=1; killers Miniature goose=7 Dog=48 Echo Gecko=54
+Depth 2, Careful (flees big threats), Sword+Light: endings Died=68 Home_done=75 Home_light=41 Home_fled=215 Timeout=1; killers Dog=17 Echo Gecko=15 Myconid=1 Eelfolk=32 Spellclaw=1 Shadow=2
+Depth 3, Careful (flees big threats), Sword+Light: endings Died=57 Home_done=69 Home_light=23 Home_fled=251; killers Myconid=7 Eelfolk=27 Spellclaw=6 Shadow=8 Flesh Orb of Zuld=9

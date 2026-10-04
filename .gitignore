@@ -1,0 +1,6 @@
+build/
+odin
+*.bin
+durf-reference/
+sim/sim
+rules/rules.test

@@ -1,0 +1,267 @@
+# Lost & Found of SPLORR!! (working title)
+
+**Status: practice project. Design decisions A to G and 1 to 9 are made (see the log below); spikes A (rules and fight sim) and A2 (delves on a grid) are done; next is A3 (ammo, drop, more ranged monsters, rerun the sim) and then Spike B (browser rendering).** This is a rehearsal for [DURF Jam 6](https://itch.io/jam/durf-jam-6) (Oct 14 to Nov 14, 2026, theme "Lost & Found"). The goal is to learn what works (rules to CRPG, stack, workflow, scope) so the real jam entry goes faster. Nothing here ships. Items marked **[OPEN]** need a decision from the product owner. Items marked **[TUNE]** are guesses to adjust by playing.
+
+Working model, as in the earlier SPLORR!! jam entries: the user is product owner and QA, Claude writes the code, and every agreed decision becomes an acceptance criterion the user can check by playing.
+
+**Decided (Oct 4): the practice targets the DURF core rules.** For the real jam we may reconsider (for example DURF Expanded). **The jam project will reference this project**, so `CLAUDE.md` has a "If you are the jam project's session" section and a table of reusable parts; keep both up to date as spikes land, and keep what is reusable free of this project's specifics (rules engine, balance bot, shim, workflow).
+
+## Decision log (all made Oct 4, 2026)
+
+| # | Decision |
+| --- | --- |
+| 1 | Death is permadeath with a full restart (seeded floors, instant character creation). |
+| 2 | One floor per delve, depth chosen at the stairs (1 to 3 in the practice build). |
+| 3 | Hirelings come in milestone 4, one at a time; the solo loop is built first. |
+| 4 | Title is a placeholder, decided later. |
+| 5 | The last lost item is the player's own name tag. |
+| 6 | First spike is the rules engine plus a text simulator (done). |
+| 7 | `durf-reference/` is git-ignored and never committed. |
+| 8 | Core rules, built on v2.2, with every number in `rules/data.odin` so a v2.4 diff is cheap. |
+| 9 | Prior-art pass done: the two "digital" DURF games in the collection are print-and-play. |
+| A | Keep the book's numbers (lethal); avoidance is the game. |
+| B | Slow burn: modest loot, the book's 1000 x HD XP; gear is the progression. |
+| C | Retreat is the book's: a second move at the same speed, no free attack. |
+| D | Combat is a failure state, not a mode. |
+| E | Depth threats are ranged attackers and darkness (no faster monsters). |
+| F | The player can drop and pick up items. |
+| G | Implement the book's Ammo rule for ranged weapons. |
+
+Still open: diffing against DURF 2.4, the early rule readings below, art-rule questions for the real jam, and the milestones from A3 on.
+
+## What we are practicing
+
+1. Turning a rules-light TTRPG (DURF, CC-BY 4.0, Emiel Boven) into a CRPG that keeps the rules' feel, not only their numbers.
+2. The proven stack: Odin to `js_wasm32`, 2D canvas shim, Urizen tileset (see `/home/yermom/git/tggd_jamference2/`).
+3. Planning docs, pure-logic-plus-native-tests layout, and a balance simulator, so the jam week is spent on content and polish.
+4. A `LEARNINGS.md` log, written as we go, for the jam.
+
+## Jam constraints to keep in mind (from the jam page, fetched Oct 4)
+
+- Must be "at least tangentially related to DURF". The 2021 rules (the PDF in `durf-reference/`) or DURF Expanded are both fine.
+- **No AI art.** "Original artwork or provided resources." We use the human-made CC0 Urizen tileset (vurmux, states no AI content). **[OPEN]** Ask on the jam Discord whether a CC0 tileset counts as a "provided resource", and whether Claude-written scripts that compose a cover image from that tileset are acceptable. Safe default for the jam: hand-assembled cover by the user.
+- No hateful content. Price unrestricted. Optional single-page constraint does not apply to a game.
+- The page says nothing about judging or AI-code disclosure. We disclose Claude's role anyway (house habit).
+- Credit DURF (Emiel Boven, CC-BY 4.0) and vurmux on the page and in the game.
+
+## Spike A findings (Oct 4, DURF 2.2, `sim/results-v2.2.txt`)
+
+A bot fought the book's monsters 4000 times per cell with a fresh random character (d3 attributes, 1 HD), in abstract melee (no map). Rerun with `odin run sim -- 4000`. Headlines:
+
+1. **The book's combat is extremely lethal to a 1 HD character, even against "easy" monsters.** Dagger and no armor, fighting on: a miniature goose kills the PC 18 percent of the time, a dog 52, an Echo Gecko 47, a Myconid 80, a Spellclaw 92, Eelfolk 93. With the best kit (sword, medium armor, shield) it is still 14 percent for the dog, 40 for the Myconid, 72 for Eelfolk. The cause is structural: the PC's d3 attribute against an NPC Skill of 2 to 4 is close to a coin flip, and the winner of every opposed roll (the monster too) deals damage; one Wound at 1 HD is a 1 in 6 death. The result barely changes if a melee pair resolves once per round instead of twice (Spike A tested both readings), so this is not an artefact of how I read the round structure.
+2. **Therefore fighting cannot be the default verb.** Permadeath (decision 1) plus these odds means a CRPG that expects the player to fight every encounter would kill almost everyone on depth 1. The avoidable-fight tools are not extras, they are the game: Reaction rolls, Indifferent monsters that can be walked around, Morale (monsters that flee), retreating to the stairs, doors, light and stealth, and DURF's own XP rule that pays for monsters "defeated or **outsmarted**".
+3. **Armor and a shield are the best early purchase.** Sword with medium armor and a shield cuts the Echo Gecko from 47 to 4 percent death and the dog from 52 to 14. Starting gold is only 10 to 60, enough for a shield (10 GP) and light armor (20); medium armor (50 GP) is the first real goal. So the shop and the first delves' loot values matter.
+4. **Hit Dice are the other lever, and they are expensive.** Going from 1 to 3 HD (best kit) cuts dog death 14 to 4, three geckos 34 to 10, Myconid 40 to 16. But an HD costs 1000 x the current HD in XP, i.e. 1000 GP of returned treasure for HD 2. **[OPEN]** The loot economy must make HD 2 reachable in a few delves (about 150 to 300 GP per lost item at depth 1) or the run is over before levelling matters. A house rule for the practice build is acceptable if we record it.
+5. **Pushing helps a little.** One Stress per attack roll is worth about 5 to 15 points of win rate (Dagger vs Gecko: 53 to 64 percent) and the cost is a slot. It is a real trade, not a fix.
+6. **Fleeing is the best defence but this sim makes it free.** The "flee at 2 Wounds" policy trades deaths for fled fights in every row, but fleeing is instantaneous and always works here. In the CRPG, retreat needs a cost (the monsters get a free attack, or you must reach the stairs), and that cost is the main balance knob.
+7. **A Shadow kills by Strength drain, whatever your HD** (about 47 percent at any HD): STR 1 to 3 has 2 to 4 hits to live. It must be a monster you avoid or beat with ranged attacks or spells, not a melee test.
+8. **Eelfolk (a 5 damage pistol) are the deadliest regular monster**, and the Flesh Orb and Dragon are effectively unwinnable (the dragon: 0 percent for every kit). They are encounters to survive, not defeat: bosses that you outsmart, parley with, or run from.
+9. **The numbers are fine as a tabletop game with a GM who prepares fights, a table of hirelings, and spells; a solo CRPG needs the avoidance toolkit above.** This is the key learning for the real jam.
+
+### What the simulator does not model yet (so the real answer is more survivable than the table)
+
+Spells and scrolls (Bolt, Healing Hand), Supply and Tonics, hirelings, movement and terrain (doors, corridors, ranged kiting), Slippery and Undead, the dragon's fire breath and the orb's spells, a PC choosing which fights to take, and the real costs of retreat.
+
+### Decisions this raises **[OPEN]** (for the next round of one-at-a-time decisions)
+
+- ~~A. Lethality~~ **Decided (Oct 4): keep the book's numbers.** Depth 1 uses an easy roster (geese, dogs, Echo Geckos) and the game leans on avoiding fights (Reaction, Morale, retreat, stealth). The simulator must show that a careful policy survives most of depth 1 (target in the permadeath section); if it cannot, the roster or the avoidance tools change before the numbers do.
+- ~~B. Loot economy~~ **Decided (Oct 4): slow burn, both book values kept.** Lost items are worth modest GP (about 40 to 150 at depth 1, more deeper) and HD still costs 1000 x HD in XP, so most runs will not reach HD 2. **Progress is gear, not levels:** returned loot pays gold as well as XP, and gold buys armor, a shield and Supply (medium armor is 50 GP, heavy 200), which the simulator shows is the biggest survival lever. Consequences: the shop and the first delves' prices are the progression design; the loot table is data (`name, owner, slots, gp, depth`) to tune later; do not tune the XP rule.
+- ~~C. Cost of retreat~~ **Decided (Oct 4): book-faithful.** The 2.2 text only says a character may "move around and take an action", and that the action can be "a second move"; it has no flee rule for PCs, no free attacks, no movement speeds or distances (NPC Morale is the only flee rule). So retreat is spending your action on a second move, at the same speed as the monsters, who attack when adjacent. What decides it is the initiative d6, the map (doors, corridors, line of sight), and monster Morale. No new rule is added. **Consequence:** the sim's free flee was wrong; the next spike (A2) gives the simulator a distance and a chase model (tiles, 1 move per move, monsters pursue) and re-measures the avoidance policies.
+
+## Spike A2 findings (Oct 4, whole delves on the grid, `sim/results-delves-v2.2.txt`)
+
+A bot plays whole delves (generated 48 by 32 floors, about 8 rooms, 5 lost items worth about 470 GP at depth 1) under the book-faithful retreat of decision C: each creature's round is a move plus an action, an action can be a second move, equal speed, no free attacks. Monsters Reaction-roll on first sight (2 to 5 hunt, the rest ignore you and let you swap places), hunt at your speed, and flee on failed Morale; a Turn is 10 tiles of travel, a torch lasts 12 Turns, a d6 of 1 each Turn brings a wandering group. Four policies, five kits, 400 delves per cell.
+
+1. **Avoidance works, as the book rules it.** At equal speed a chaser starting 3 or more tiles away never gets an attack in, and one starting adjacent gets at most one exchange (tests prove both). A bot that flees from every hunter (the "Coward") survives **91 to 99 percent of depth 1 delves, with any kit**, 79 to 91 percent at depth 3. A bot that fights everything survives 18 to 31 percent with melee kits. So decision A (keep the numbers, avoidance is the game) holds up.
+2. **Fighting is never worth it.** The "Careful" bot that fights small hunters (a lone dog, gecko or goose) dies far more than the Coward (73 versus 96 percent survival with sword and light armor at depth 1) and earns the same gold, because kills pay 10 to 25 XP and one lost item pays about 100. Under DURF's own XP rule, **combat is a failure state, not a mode**. That fits the metaphor (a Lost Property clerk running from things), but it means the fun has to come from the avoidance game: light, routes, doors, what you carry. **[OPEN decision D]**
+3. **The bag is the economy.** The starting kit (2 Supply, a dagger, 3 junk belongings, plus weapon and armor) fills most of the 11 to 13 slots, so the careful bot comes home with 1.9 of the floor's 4.9 lost items and 0.8 slots free. Slots, not sight or reachability, limit income. Heavy gear halves the take: sword, medium armor and shield bank about 70 GP at depth 1 against 140 to 190 for the dagger kit, because the armor occupies the slots the loot needs. The "Stress eats the bag" hook extends to armor, and **dropping junk** (the three random belongings) is a real decision the bot never makes. **[OPEN decision F]**
+4. **Pushing does almost nothing for a careful player** (a few points of survival, and it costs slots). Its value is as an emergency button when cornered, not a routine tool.
+5. **Levelling is far off.** XP per delve is roughly the gold banked: about 140 to 190 at depth 1, 220 to 290 at depth 2, 370 to 440 at depth 3. HD 2 (1000 XP) is about 6 delves at depth 1 or 3 at depth 3, and a careful player dies at 4 to 27 percent per delve. As decided in B, gear and the bag are the progression, not levels; depth is the risk and reward dial (depth 3 pays about 2.5 times depth 1 at similar survival for the cautious).
+6. **Difficulty is flat in depth if the only answer is to run.** Survival for the Coward barely falls from depth 1 to depth 3, because running always works at equal speed. What actually kills the careful bot deeper: **Eelfolk** (a ranged 5 damage pistol; 32 of 68 deaths at depth 2, 27 of 57 at depth 3), the **Flesh Orb**, the **Shadow**, **Echo Gecko stun-then-bite** and **dogs** when it chose to fight. So deeper floors need threats that running does not solve: ranged attackers, anything faster than you, monsters between you and the stairs, the dark when the torch runs out (52 of 400 depth 1 delves ended because the light did). **[OPEN decision E]**
+7. **Ranged weapons dominate.** Even a bot that fights everything survives 81 percent of depth 1 with a bow and light armor (versus 31 percent for a sword), since a ranged attacker is not hit back and monsters take rounds to arrive. The book limits this with Ammo (a d6 after a fight: on a 1 you have one shot left), which the sim does not model yet. **[OPEN decision G]**
+8. **Level design matters more than the dice.** Two bugs found by the bot, both worth carrying to the jam: a single chain of corridors lets one monster cut a floor in two (fixed with extra loops and by letting you swap places with ignoring monsters), and a monster that fails Morale must actually run away, or it blocks corridors forever.
+
+**Caveats.** The bot knows where the rooms are (a player would not), never drops items or uses Supply, has no spells or hirelings, sees monsters perfectly within 6 tiles, and monsters chase flawlessly and never lose track. Numbers are comparisons between policies, not predictions of human play.
+
+### Decisions this raises **[OPEN]**
+
+- ~~D. Role of combat~~ **Decided (Oct 4): combat is a failure state.** It is what happens when avoidance fails (cornered, found by a wanderer, shot by something ranged). The book's XP rule is kept, so kills stay worth little and loot is the income. Consequences: the fun must come from the avoidance game (light, routes, the bag, timing, reading monsters before they react), so the UI must make those readable (what is hunting you, how far, how much torch is left); combat should still be fast, clearly shown roll by roll, and deadly; do not add kill rewards.
+- ~~E. Threats~~ **Decided (Oct 4): ranged attackers and darkness.** Deeper floors lean on ranged monsters (Eelfolk and their kin: they shoot while you run, so retreat has a cost) and on torch pressure (the dark leaves 1 tile of sight, so you meet things adjacent with no running start). Not chosen: faster monsters (the book gives no speeds, so it would be an invented rule). Monsters on your only way home are left to level design and the wanderer spawn, not a dedicated mechanic. Consequences: depth 2 and 3 rosters get more ranged monsters (**[TUNE]**), and the roster needs at least one more ranged NPC beyond the Eelfolk (our own, or a converted book monster); torch length (12 Turns) and the wanderer die are the tuning knobs for darkness.
+- ~~F. Dropping items~~ **Decided (Oct 4): yes, drop and pick up.** One key drops a chosen item on the floor (it stays there and can be picked up again, so dropping is not a loss). The three random belongings (and old gear) become real choices against lost items worth about 100 GP. Not chosen: selling junk at the office. Consequences: items need individual slot sizes and names (belongings are already a table), the bot gets a drop policy (drop junk when a seen item does not fit), and the simulator should rerun with it, since it changes income (the 1.9 of 4.9 items returned was bag-limited).
+- ~~G. Ammo~~ **Decided (Oct 4): implement the book's Ammo rule.** A ranged weapon needs an abstract Ammo item (1 slot, 5 GP, bought with the weapon). After a fight in which the PC shot, roll a d6: on a 1 only one shot is left, and then the Ammo is removed from the inventory. Ammo costs a slot, so it competes with loot, and it caps kiting. Not chosen: a house Break for point-blank shooting. Needs: an Ammo item in the data table, a post-fight check in the engine, and the simulator rerun to see how far it tames the bow (the Pistol and Blowpipe need no Ammo per the weapon table: the blowpipe says so, the pistol uses Ammo).
+
+## Source material: the DURF Collection
+
+https://itch.io/c/1888615/durf-collection (29 entries, fetched Oct 4; a fetch summary can misread, so verify anything we rely on on the page itself). Use it for inspiration and conventions, **not as a content source**: each entry has its own author and license, and DURF's CC-BY only covers the core rules. Before using any third-party monster, item or spell, check its page for a license and credit it, or write our own.
+
+| Use | Entries worth reading |
+| --- | --- |
+| **Prior art (solo, but on paper)** | *The Rise of Nudroth* (MADBARD, 2022, roll-and-write, castle delve against a "before Midnight" clock, a few hours) and *The Liminal Sanctum* (SnakeSteak, DURF Jam 2025, solo rogue-like with printed dungeon tiles, high stakes, very quick leveling, powerful "souls" with a price). **Both are print-and-play PDFs, not digital games** (an earlier note here said digital; a fetch summary was wrong). Read in Oct 4 pass; pages give no mechanics, only the pitch (see `LEARNINGS.md`). |
+| **Monsters and NPCs** | *What Dwells Beneath* (mini bestiary), *Rude Rivals* (NPC enemies), *Lil' DURF OC Bestiary*. Shows the house style for stat blocks (Skill, HD, Armor, ML plus one or two tricks). |
+| **Items** | *Madame Damocles' Emporium of Lively Arms* (sentient weapons), *The Spectral Dungeon and Spectral Items*. |
+| **Mechanics variants** | *Hedge Magic* (alternative spells), *GHAST* (death supplement, relevant to our permadeath question), *Overworld Adventures Vol. I* (encounter tables). |
+| **"Lost" and found-flavoured** | *Lost to a Yellow Stone*, *Lost To The Starlit Reptiles*, *The Wizard's Dumpster*. Titles and tone that match the jam theme. Look at how they use the word, not their text. |
+| **Edition** | *Optional Character Details for DURF Expanded* and *Circumstances of One's Birth* both name **DURF Expanded**, so it is a real, separate ruleset. **[OPEN]** Find out what Expanded changes; the jam page allows it. |
+
+## Premise
+
+You work at the **Lost Property Office** of a town whose dungeons swallow things. Umbrellas, ancestors' teeth, a dragon's left shoe. Each delve you go down to recover lost items and bring them back up. Owners claim them, and the office pays you. In DURF, XP is the gold value of treasure brought back safely, so **the metaphor is the XP rule**: you only get ahead by returning what is lost, and only if you survive the way back. Copy is deadpan, straight, with the "of SPLORR!!" absurdism in the item names.
+
+## DURF rules digest (what the PDF actually says)
+
+> **Version caveat.** This digest is from the **v2.2 (2021) PDF** in `durf-reference/` (untracked, git-ignored on purpose; never commit it). The current release on https://emielboven.itch.io/durf is **v2.4**, so details here may be out of date. **[OPEN]** Diff against 2.4 (the page offers an online rules reference, a fillable sheet and an editable Google Doc) before locking any numbers. The jam page allows the 2021 rules or "DURF Expanded".
+
+| Area | Rule |
+| --- | --- |
+| Attributes | STR, DEX, WIL, each d3 at creation. Max 8. |
+| HD / slots | Start 1 HD. Slots = 10 + STR. Stress takes slots. Cannot carry more than slots. |
+| Start kit | 2 Supply, a dagger, 3 belongings from a d40 table, 2d6 x 5 gold. |
+| Action roll | d20 + attribute, **over 15** succeeds. |
+| Buff / Break | Each is an extra d6. Buffs and Breaks cancel. Highest d6 of the surviving kind is added or subtracted. NPCs never roll them. |
+| Push | Before a roll, with a free slot, take 1 Stress for a Buff. Repeatable while slots remain. |
+| Opposed | Both roll d20 + score (NPC uses Skill). Highest wins. Ties: GM decides (combat: attacker wins). |
+| Combat | Per round, d6 per side, higher goes first (PCs win ties). Each character moves and acts. Melee: opposed STR. Ranged: opposed DEX, defender win means a dodge, no damage back. |
+| Crit / worn | Natural 20 on an attack: double damage, even if the attack lost the opposed roll. Natural 1: weapon is worn (damage 1) until repaired. Ranged targets cannot crit you. |
+| Damage | Armor points soak first, then Wounds. Each time Wounds are received, roll the HD d6s; if the result is **<= total Wounds**, the creature dies. 0 HD dies on any Wound. Shield: -1 damage, minimum 1. |
+| Morale | NPC Morale: roll 2d6 when shocked; higher than ML means flee or parley. |
+| Time | Round 10 s (combat). **Turn 10 min** (dungeon): d6 per turn, a 1 is an encounter. Watch 4 h (overworld). |
+| Rest | A day in a safe place clears Wounds, Stress, repairs Armor and weapons. |
+| Supply | 5 GP abstract kit item. Trade one for any simple common item, or repair 2 Armor or one worn weapon (takes a turn). |
+| Light | Torch 6 turns, lantern 18 turns plus oil. |
+| Spells | WIL roll, success costs 1 Stress, fail costs none, natural 1 is a Blunder (d20 table). A full turn spent casting is automatic. X = half WIL rounded up. Scrolls cast free and are destroyed. |
+| XP | 1 GP of non-magical treasure returned = 1 XP. 25 XP per NPC HD defeated or outsmarted. HD x 1000 XP buys the next HD. Each HD up: +1 attribute (max 8) or a new spell. Max 12 HD. |
+| Hirelings | d4 Skill, 1 HD, a weapon, 10 slots. 1 GP per Skill per day. Half a treasure share if they fight. Up to WIL hirelings per PC. |
+| Reaction | 2d6: 2-3 Hostile, 4-5 Unfriendly, 6-8 Indifferent, 9-10 Friendly, 11-12 Helpful. |
+
+### Rule readings I am proposing (the PDF is ambiguous) **[OPEN]**
+
+1. **HD death roll uses the sum of all HD dice** (an 8 HD dragon rolls 8d6 against its Wounds). The text says "each HD is a d6... if the result", and the sum is the only reading that makes HD matter.
+2. **Gold is the XP economy, so loot values must be hundreds of GP** (1 HD needs 1000 XP). Treasure bands: depth 1 about 40 to 150 GP per item, depth 5 about 300 to 900.
+3. **0 HD monsters are worth 10 XP** (the 25 x HD rule would pay nothing). House rule.
+4. **Action roll odds are low on purpose.** With attribute 1 to 3, success needs 13 to 15 on the d20 (30 to 40 percent). That is why Push exists. The design leans into it instead of rebalancing the numbers.
+5. **Initiative is per side, per round**, exactly as written, not per creature.
+
+## The core idea: Stress eats the bag
+
+The strongest thing in DURF for a CRPG is a single shared resource: **inventory slots hold both loot and Stress**. Pushing a roll gives a Buff but fills a slot that could have held a 100 GP lost umbrella. So every risky roll trades survival now against profit at the end of the delve. A delve is a decision about how much of your bag to spend on not dying, and the XP only counts if you walk out. This is the hook, the metaphor and the balance lever in one. Everything else serves it.
+
+## Consequences of permadeath (decided Oct 4)
+
+Full restart on death makes some earlier proposals matter more, so they become design requirements:
+
+- **Short runs.** A whole run should fit a play session of about 15 to 30 minutes; a dead character should cost a little time, not hours. Practice target: three depths, a run is about 5 delves. **[TUNE]**
+- **Character creation must be instant** (it is, in DURF: three d3 rolls, a d40 table, gold). Show it as one screen with a "reroll" that is free before the first delve, so a bad roll never feels like the game's fault.
+- **Fairness is the balance simulator's job.** With permadeath the player must see why they died. Every roll is shown in the log (acceptance criterion 2), and the bot must prove that a careful policy survives most depth-1 delves **[TUNE]**: for example 90 percent of depth 1 delves survived by a bot that never pushes and retreats at 1 Wound.
+- **Escape hatches matter.** Retreat (walking back to the stairs), Morale flight of monsters, avoiding Indifferent monsters, and the Reaction roll are how a careful player lives. They are not extras.
+- **A fast restart loop and a score.** The game-over screen shows the run's score (XP returned, claims closed, depth reached) so a dead run still reads as an accomplishment. A saved best score is out of scope for the practice (**[OPEN]**, `localStorage` is easy).
+- **Seeds.** A run is generated from a seed, shown on the game-over screen, so "that dungeon again" is possible and so deaths can be reproduced in testing.
+- **Hirelings take hits first** (they are the natural buffer, and 1 GP per Skill per day is the cost of staying alive). This raises their priority in the plan.
+- **The banked-XP rule changes:** XP is only gained by returning items, so surviving to return is the whole economy; nothing is kept after death except the score.
+
+## Game loop
+
+1. **Office (town screen).** A menu. Shows the claims ledger (lost items owners are asking about, with depth hints), your gold and XP, your party. Actions: hire a hireling, buy gear and Supply, rest a day (clears Wounds and Stress, repairs everything, costs a day's hireling wages), descend.
+2. **Delve.** A grid dungeon, one floor per delve, depth chosen at the stairs (1 to 5, deeper unlocks as claims are filled). Real-time-free, turn-based: each step costs a tick; every 10 steps is one DURF Turn (torch burns, d6 for wandering encounter). Searching a room costs a Turn.
+3. **Encounters.** Seeing a monster group rolls a Reaction. Hostile or Unfriendly attacks, Indifferent leaves you alone (you may avoid or attack), Friendly or Helpful may trade or give a hint. Combat is round based (see below).
+4. **Loot.** Lost items are placed in rooms. Each has a name, an owner, a slot cost, a GP value. Picking up costs slots.
+5. **Return.** Walk back to the stairs. Items turned in at the office become XP and gold. **Dying (a failed HD roll) is permadeath with a full restart (decided Oct 4).** The run ends, the game-over screen shows what was returned (XP, claims closed, depth), and any key starts a new character. See "Consequences of permadeath".
+6. **Win.** Close the five Lost Property Reports (one notable claim per depth, the last one is a deadpan twist: your own forgotten name tag). Play can continue.
+
+## Combat in the CRPG
+
+- Grid, turn-based, no real-time. Combat starts when a hostile monster sees the party and ends when none remain or the party leaves line of sight.
+- Each round: roll d6 per side (ties: the player), the winning side acts first. On the player's turn each party member moves one tile and may act (bump to melee, or choose ranged or spell).
+- Melee is an opposed STR roll, ranged an opposed DEX roll, with all the crit and worn rules above. The player's roll is d20 + attribute (+ optional Push). Monsters roll d20 + Skill.
+- Damage goes to Armor, then Wounds; a Wound triggers the HD roll.
+- Morale roll when the first monster of a group dies, or the leader dies.
+- Allies (hirelings) act automatically: move toward the nearest enemy, attack when adjacent.
+
+## Input and UI (practice constraints: keep it small)
+
+- Keyboard only: arrows/WASD move and bump-attack, `.` or Space waits/searches, `P` toggles Push for the next roll, `1` to `9` choose from menus, `E` interact (pick up, stairs, cast). Read `e.key` before `e.code`.
+- 20 by 20 tile canvas, 800 by 800. Rows: a top HUD (Wounds/Armor/HD, slots as little squares coloured for item vs Stress, gold, torch), a 20 by 13 scrolling map, a 4-line message log at the bottom. Text uses the Urizen bitmap font at 0.6 tile per glyph (about 33 characters per line).
+- No mouse needed; touch is out of scope.
+
+## Dungeon generation
+
+- Rooms-and-corridors, seeded, 48 by 32. Corridors always link room i to i+1 so every room is reachable, and the stairs are in room 0.
+- Placement by depth: monsters from a table (the book's NPCs are the depth 1 to 5 roster: Echo Gecko, Myconid, Eelfolk, Shadow, Spellclaw, Flesh Orb, Dragon as the depth 5 boss), loot items, one notable claim.
+- Light: a torch gives radius 4 with line of sight; explored tiles stay remembered. No light means radius 1 (and the Break penalty on attacks, **[OPEN]**).
+- Test hook: a pure function `generate(seed, depth) -> Level` so tests can check connectivity and that every notable claim is reachable.
+
+## Architecture (copy the proven layout)
+
+- `dungeon/` (package `dungeon`, Spike A2, imports `../rules`): `generate`/`init_delve` (seeded rooms, loops, rosters by depth, loot), `los`, `bfs`, Reaction on sight, `monsters_act` (a move plus an action, ranged reload, stun, flee), `round_move`/`round_fight`, the Turn clock, wanderers, `exit_delve`; 15 native tests. `sim/delve.odin` is the bot that plays whole delves.
+- `rules/` (package `rules`, built in Spike A): `data.odin` (every rule number, v2.2) and `rules.odin` (seeded RNG, action and opposed rolls, Buffs/Breaks, push and Stress, damage, HD death, morale, reaction, initiative, XP, character creation, rest), with `rules_test.odin` (16 native tests, `odin test rules -define:ODIN_TEST_THREADS=1`). Pure, no browser imports, own xorshift RNG so native and wasm give the same sequence. `sim/main.odin` is the combat simulator (`odin run sim -- 4000`). A later game package imports `../rules`.
+- `src/world.odin`: level generation, FOV, items and monster tables.
+- `src/game.odin`: state machine (Office, Delve, Combat, Menu, GameOver), turn clock, party and AI.
+- `src/web.odin` (`#+build js`): canvas shim, key input, drawing, `step`.
+- `src/*_test.odin` (`#+build !js`): rules tests (known seeds), connectivity, and a **balance simulator**.
+- `web/index.html`, `build.sh`, `shippit.sh`: from the Roomba Rights repo. `ODIN=/home/yermom/ODIN/odin ./build.sh`; serve with `python3 -m http.server -d build/web <port>`.
+- Gotchas to respect (from the vault): seed the RNG in `main`, cap every retry loop, `ODIN_TEST_THREADS=1`, 2D canvas only, no `core:os` in shared code, test a mechanic's move not only reachability.
+
+## Balance simulator (a practice target worth having)
+
+A headless bot plays thousands of delves per depth with simple policies (never push, push on attack, push when slots allow) and reports clear rate, death rate and XP per delve. DURF's low success odds and stress economy are exactly what a bot can tune. This is the thing most likely to pay off in the real jam.
+
+## Content slice for the practice build
+
+- Classes: none (DURF has none). Character generation as per book, plus a choice of 3 starting belongings from the d40 table (a small subset implemented: dagger, sword, shield, light armor, bow, pistol, scroll of Bolt, tonic of health).
+- Spells: Bolt and Healing Hand only (enough to exercise WIL rolls, Stress and Blunders; a short Blunder table with 5 to 6 implemented effects, the rest flavour text).
+- Monsters: the 7 book NPCs. Items: 15 to 20 named lost items with owners.
+- Depths: 3 for the practice build (5 for the jam).
+
+## Sprite candidates (Urizen, `assets/tileset.png`, (col, row); verify in-game)
+
+| Thing | Tile |
+| --- | --- |
+| Player (white person) | (105,0) |
+| Hireling (orange person) | (105,5) |
+| Echo Gecko (teal lizard) | (13,14) |
+| Myconid (red toadstool) | (2,10) |
+| Eelfolk (blue fish) | (15,14) |
+| Shadow (dim grey person) | (108,13) |
+| Spellclaw (red horned person) | (106,6) |
+| Skeleton (spare) | (105,10) |
+| Walls | (0,2) grey cobble, (0,3) red brick, (0,4) wood |
+| Floors | (15,6) teal carpet, (8,5) parquet, (3,6) zigzag |
+| Furniture / chests | (8,37) and neighbours, barrels (11,37) |
+| Potions | row 4, columns 26 to 47 |
+| Swords, axes, bows, shields | rows 6 to 12, columns 26 to 40 |
+| Bones, skulls | row 38, columns 0 to 9 |
+
+Still to find: Dragon, Flesh Orb (try the sci-fi section, columns 78 to 103, and columns 130 to 205 monsters), stairs, torch, gold, scroll. `tools/sheet.py c0 c1 r0 r1 out.png` makes a labelled contact sheet.
+
+## Milestones (plan; spikes marked)
+
+0. **Design sign-off** (this document, plus answers to the open questions below).
+1. **Spike A, rules and sim.** `rules.odin` plus tests plus a text-only fight simulator, to see whether the DURF numbers feel survivable. Throwaway UI.
+2. **Spike B, render.** Static map, scrolling, FOV, fog, HUD slot bar drawn in the browser. Proves the shim and layout.
+3. **Vertical slice.** Office to one delve to loot to return to XP, with combat and one spell.
+4. **Content and balance.** The roster, depths 2 and 3, hirelings, the balance bot.
+5. **Polish and write-up.** `LEARNINGS.md`, `ITCH_DESCRIPTION.md` draft, vault notes.
+
+## Acceptance criteria (draft, for QA by playing)
+
+1. A fresh character has d3 attributes, 1 HD, 10 + STR slots, 2 Supply, a dagger and 2d6 x 5 gold.
+2. Every roll shows its parts in the log (for example `STR roll 9+2 vs 14 -> 11, success`), including Buff and Break d6s.
+3. Pushing adds a Stress that visibly occupies a slot and blocks picking up loot when the bag is full.
+4. Wounds trigger an HD roll, and the log shows the sum against Wounds.
+5. Items are only worth XP after being returned to the office; dying with them loses them.
+6. Every 10 steps one Turn passes, the torch burns down, and an encounter fires on a 1.
+7. Resting at the office clears Wounds and Stress.
+8. 1000 x HD XP raises HD and offers the +1 attribute or spell choice.
+9. All text fits the screen. No sprite has a black background.
+10. The game loads and plays from a static server, and from an itch.io HTML5 upload.
+
+## Open questions for the product owner
+
+1. ~~Death~~ **Decided (Oct 4): permadeath, full restart.** (I had recommended losing the loot and waking at the office; the product owner chose the OSR-faithful option.)
+2. ~~Delve shape~~ **Decided (Oct 4): one floor per delve.** Each trip is a single floor of about 48 by 32 tiles with 5 to 8 rooms; you choose the depth (1 to 3 in the practice build) at the stairs, loot, and walk back to the same stairs to bank the XP. Deeper floors are harder and pay more. Multi-floor dungeons and shortcut ropes are out of scope.
+3. ~~Hirelings~~ **Decided (Oct 4): milestone 4, one at a time.** Build the solo loop first (office, delve, combat, loot, return); add a single hireling afterwards. The early game is harsher without a buffer, which the balance simulator must account for (solo survival of depth 1 is the baseline). Several hirelings (up to WIL) are out of scope for the practice.
+4. ~~Title and tone~~ **Decided (Oct 4): name it later.** "Lost & Found of SPLORR!!" stays a placeholder title everywhere (code, docs, window title). Keep the copy short and deadpan regardless; the name is a jam-time decision.
+5. ~~Final claim~~ **Decided (Oct 4): the player's own name tag.** The deepest notable claim is an item bearing the player character's name: the office was looking for you all along. Practice build: three depths, so three notable claims, with the name tag at depth 3 (the jam would use five). It is data, not code: the claim table holds name, owner, depth and value, and the name tag's owner is the character. The text stays deadpan, no wink. The twist is still a placeholder wording.
+6. ~~First spike~~ **Decided (Oct 4): Spike A, rules engine plus text simulator**, no graphics. `src/rules.odin` with native tests, and a headless bot that fights the book's monsters thousands of times to check the numbers are survivable. Spike B (render) comes after. The rules edition question (8) should be settled before the numbers are locked, but the engine itself is parameterised so a 2.4 diff is cheap.
+7. ~~Repo hygiene~~ **Decided:** `durf-reference/` is git-ignored and never committed.
+9. ~~Prior art pass~~ **Done (Oct 4).** Both games are print-and-play, and their pages give no mechanics. What we take from them is in `LEARNINGS.md`: a browser CRPG is unusual in this jam, a clock and a priced power-up are both cheap ideas to consider, and AI-free claims are visible on entries.
+8. ~~Rules version~~ **Decided (Oct 4): core rules, built on v2.2 now, diff against 2.4 later.** Every rule number lives in one data table (`src/rules_data.odin`: attribute die, DC 15, slot base, weapon and armor tables, crit and worn thresholds, XP per HD, monster stat blocks), so a 2.4 diff is a data edit plus tests, not a refactor. Tests assert behaviour through that table, not literal numbers where possible. When the 2.4 text arrives: list every change here before editing code. DURF Expanded is reconsidered for the jam.

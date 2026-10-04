@@ -1,0 +1,266 @@
+package rules
+
+import "core:log"
+import "core:testing"
+
+seeded :: proc(seed: u64) -> Rng {
+	r: Rng
+	rng_seed(&r, seed)
+	return r
+}
+
+// A creature that wins or loses every opposed roll against ordinary scores.
+titan :: proc() -> Creature { return Creature{name = "titan", attrs = {.STR = 40, .DEX = 40, .WIL = 40}, hd = 1, weapon = .Sword, alive = true, is_pc = true} }
+mouse :: proc() -> Creature { return Creature{name = "mouse", attrs = {}, hd = 1, npc_dmg = 2, alive = true} }
+
+@(test)
+rng_is_deterministic_and_in_range :: proc(t: ^testing.T) {
+	a := seeded(42)
+	b := seeded(42)
+	counts: [21]int
+	for _ in 0 ..< 20000 {
+		x := d(&a, 20)
+		testing.expect_value(t, x, d(&b, 20))
+		testing.expect(t, x >= 1 && x <= 20, "d20 out of range")
+		counts[x] += 1
+	}
+	for f in 1 ..= 20 { testing.expectf(t, counts[f] > 700 && counts[f] < 1300, "face %d came up %d of 20000", f, counts[f]) }
+}
+
+@(test)
+action_roll_succeeds_only_over_the_dc :: proc(t: ^testing.T) {
+	r := seeded(1)
+	for _ in 0 ..< 5000 {
+		x := roll_d20(&r, 2)
+		testing.expect_value(t, x.total, x.nat + 2)
+		testing.expect_value(t, x.success, x.total > 15)
+	}
+}
+
+@(test)
+action_roll_odds_match_the_book :: proc(t: ^testing.T) {
+	// score 1 needs a natural 15+ (30 percent), score 3 needs 13+ (40 percent)
+	r := seeded(2)
+	wins1, wins3, n := 0, 0, 40000
+	for _ in 0 ..< n {
+		if roll_d20(&r, 1).success { wins1 += 1 }
+		if roll_d20(&r, 3).success { wins3 += 1 }
+	}
+	testing.expectf(t, abs(f64(wins1) / f64(n) - 0.30) < 0.02, "score 1 success %d / %d", wins1, n)
+	testing.expectf(t, abs(f64(wins3) / f64(n) - 0.40) < 0.02, "score 3 success %d / %d", wins3, n)
+}
+
+@(test)
+buffs_and_breaks_cancel_and_take_the_highest :: proc(t: ^testing.T) {
+	r := seeded(3)
+	sum1, sum2, n := 0, 0, 20000
+	for _ in 0 ..< n {
+		even := roll_d20(&r, 0, 2, 2)
+		testing.expect_value(t, even.extra, 0)
+		testing.expect_value(t, even.buffs, 0)
+		one := roll_d20(&r, 0, 1, 0)
+		two := roll_d20(&r, 0, 2, 0)
+		testing.expect(t, one.extra >= 1 && one.extra <= 6, "one Buff adds a d6")
+		testing.expect(t, two.extra >= 1 && two.extra <= 6, "two Buffs add the highest d6")
+		sum1 += one.extra
+		sum2 += two.extra
+		brk := roll_d20(&r, 0, 0, 1)
+		testing.expect(t, brk.extra <= -1 && brk.extra >= -6, "a Break subtracts a d6")
+		net := roll_d20(&r, 0, 3, 2) // 3 Buffs - 2 Breaks = 1 Buff
+		testing.expect_value(t, net.buffs, 1)
+	}
+	testing.expectf(t, f64(sum1) / f64(n) > 3.3 && f64(sum1) / f64(n) < 3.7, "mean of d6 is %v", f64(sum1) / f64(n))
+	testing.expectf(t, f64(sum2) / f64(n) > 4.3 && f64(sum2) / f64(n) < 4.7, "mean of best of 2d6 is %v", f64(sum2) / f64(n))
+}
+
+@(test)
+armor_soaks_before_wounds :: proc(t: ^testing.T) {
+	r := seeded(4)
+	c := Creature{hd = 1, armor = 3, armor_max = 3, alive = true}
+	res := apply_damage(&r, &c, 2)
+	testing.expect_value(t, c.armor, 1)
+	testing.expect_value(t, c.wounds, 0)
+	testing.expect(t, !res.hd_rolled, "no Wounds, no HD roll")
+	res = apply_damage(&r, &c, 4) // 1 soaked, 3 Wounds
+	testing.expect_value(t, c.armor, 0)
+	testing.expect_value(t, c.wounds, 3)
+	testing.expect(t, res.hd_rolled, "Wounds trigger the HD roll")
+}
+
+@(test)
+zero_hd_dies_on_any_wound :: proc(t: ^testing.T) {
+	r := seeded(5)
+	c := Creature{hd = 0, alive = true}
+	apply_damage(&r, &c, 1)
+	testing.expect(t, !c.alive, "0 HD dies on any Wound")
+}
+
+@(test)
+shield_takes_one_off_but_never_below_one :: proc(t: ^testing.T) {
+	r := seeded(6)
+	c := Creature{hd = 12, shield = true, alive = true}
+	testing.expect_value(t, apply_damage(&r, &c, 4).dmg_in, 3)
+	testing.expect_value(t, apply_damage(&r, &c, 1).dmg_in, 1)
+	testing.expect_value(t, apply_damage(&r, &c, 4, direct = true).dmg_in, 4)
+}
+
+@(test)
+hd_death_uses_the_sum_of_hit_dice :: proc(t: ^testing.T) {
+	r := seeded(7)
+	// 1 HD with 6 Wounds always dies (a d6 is never above 6)
+	for _ in 0 ..< 200 {
+		c := Creature{hd = 1, alive = true}
+		apply_damage(&r, &c, 6)
+		testing.expect(t, !c.alive, "1 HD with 6 Wounds must die")
+	}
+	// 1 HD with 1 Wound dies on a 1 only: about 1 in 6
+	dead, n := 0, 30000
+	for _ in 0 ..< n {
+		c := Creature{hd = 1, alive = true}
+		apply_damage(&r, &c, 1)
+		if !c.alive { dead += 1 }
+	}
+	testing.expectf(t, abs(f64(dead) / f64(n) - 1.0 / 6.0) < 0.01, "died %d of %d", dead, n)
+	// 8 HD (a dragon) with 8 Wounds: the sum of 8d6 is at least 8, so only a perfect 8 kills it
+	alive := 0
+	for _ in 0 ..< 2000 {
+		c := Creature{hd = 8, alive = true}
+		apply_damage(&r, &c, 8)
+		if c.alive { alive += 1 }
+	}
+	testing.expect(t, alive > 1990, "8 HD should almost never die to 8 Wounds")
+}
+
+@(test)
+attack_exchanges_obey_the_rules :: proc(t: ^testing.T) {
+	r := seeded(8)
+	crit_while_losing := 0
+	for i in 0 ..< 6000 {
+		a := new_character(&r)
+		b := new_npc(Monster(i % len(Monster)))
+		kind := Attack_Kind.Melee if i % 3 != 0 else Attack_Kind.Ranged
+		x := resolve_attack(&r, &a, &b, kind)
+		testing.expect_value(t, x.att_wins, x.att.total >= x.def.total) // ties to the attacker
+		if kind == .Ranged {
+			testing.expect(t, !x.hit_att, "a ranged target never hits back")
+			testing.expect(t, !x.def_crit, "a ranged target never crits")
+			testing.expect_value(t, x.dodged, !x.hit_def)
+		} else {
+			testing.expect(t, !x.dodged, "melee has no dodge")
+			if x.att_wins { testing.expect(t, x.hit_def, "the winner hits") } else { testing.expect(t, x.hit_att, "the loser is hit") }
+		}
+		if x.att_crit && x.hit_def {
+			testing.expect_value(t, x.dmg_def, 2 * WEAPONS[a.weapon].dmg) // a crit is a natural 20, so the weapon was not just worn
+			if !x.att_wins { crit_while_losing += 1 }
+		}
+		if x.att.nat == 1 { testing.expect(t, a.worn, "a PC's natural 1 wears its weapon") }
+	}
+	testing.expect(t, crit_while_losing > 0, "a natural 20 should hit even when the opposed roll is lost")
+}
+
+@(test)
+stress_and_pushing_fill_slots :: proc(t: ^testing.T) {
+	c := Creature{is_pc = true, attrs = {.STR = 1, .DEX = 0, .WIL = 0}, item_slots = 10, alive = true}
+	testing.expect_value(t, slots_total(c), 11)
+	testing.expect_value(t, slots_free(c), 1)
+	testing.expect_value(t, push(&c, 3), 1) // only one slot free
+	testing.expect_value(t, c.stress, 1)
+	testing.expect_value(t, slots_free(c), 0)
+	testing.expect_value(t, push(&c, 1), 0)
+	npc := new_npc(.Dog)
+	testing.expect_value(t, push(&npc, 2), 0) // NPCs cannot push
+	rest(&c)
+	testing.expect_value(t, c.stress, 0)
+}
+
+@(test)
+morale_and_reaction :: proc(t: ^testing.T) {
+	r := seeded(9)
+	flee2, n := 0, 5000
+	for _ in 0 ..< n {
+		testing.expect(t, !morale_flees(&r, -1), "ML none never flees")
+		testing.expect(t, !morale_flees(&r, 12), "2d6 cannot beat 12")
+		if morale_flees(&r, 2) { flee2 += 1 }
+	}
+	testing.expectf(t, f64(flee2) / f64(n) > 0.95, "ML 2 should almost always flee (%d)", flee2)
+	for total in 2 ..= 12 {
+		want: Reaction
+		switch total {
+		case 2, 3: want = .Hostile
+		case 4, 5: want = .Unfriendly
+		case 6, 7, 8: want = .Indifferent
+		case 9, 10: want = .Friendly
+		case: want = .Helpful
+		}
+		testing.expect_value(t, reaction_for_total(total), want)
+	}
+}
+
+@(test)
+initiative_ties_go_to_the_pcs :: proc(t: ^testing.T) {
+	r := seeded(10)
+	first, n := 0, 30000
+	for _ in 0 ..< n { if pcs_first(&r) { first += 1 } }
+	// P(pc >= npc) with d6 vs d6 = 21/36
+	testing.expectf(t, abs(f64(first) / f64(n) - 21.0 / 36.0) < 0.01, "pcs first %d of %d", first, n)
+}
+
+@(test)
+xp_buys_hit_dice_automatically :: proc(t: ^testing.T) {
+	c := Creature{hd = 1, alive = true}
+	testing.expect_value(t, add_xp(&c, 999), 0)
+	testing.expect_value(t, add_xp(&c, 1), 1)
+	testing.expect_value(t, c.hd, 2)
+	testing.expect_value(t, c.xp, 0)
+	c = Creature{hd = 1, alive = true}
+	testing.expect_value(t, add_xp(&c, 3000), 2) // 1000 for HD 2, 2000 for HD 3
+	testing.expect_value(t, c.hd, 3)
+	c = Creature{hd = HD_MAX, alive = true}
+	testing.expect_value(t, add_xp(&c, 999999), 0)
+	testing.expect_value(t, xp_for_defeating(4), 100)
+	testing.expect_value(t, xp_for_defeating(0), XP_PER_ZERO_HD)
+}
+
+@(test)
+characters_follow_the_creation_rules :: proc(t: ^testing.T) {
+	r := seeded(11)
+	overloaded := 0
+	for _ in 0 ..< 3000 {
+		c := new_character(&r)
+		for a in Attr { testing.expect(t, c.attrs[a] >= 1 && c.attrs[a] <= 3, "attributes are d3") }
+		testing.expect_value(t, c.hd, 1)
+		testing.expect_value(t, c.supply, 2)
+		testing.expect(t, c.gold >= 10 && c.gold <= 60 && c.gold % 5 == 0, "gold is 2d6 x 5")
+		testing.expect(t, c.item_slots >= 6, "two Supply, a dagger and three belongings")
+		if slots_used(c) > slots_total(c) { overloaded += 1 }
+	}
+	log.infof("starting characters carrying more than their slots: %d of 3000", overloaded)
+}
+
+@(test)
+shadow_drains_strength_and_rest_restores_it :: proc(t: ^testing.T) {
+	r := seeded(12)
+	pc := titan()
+	pc.attrs = {.STR = 1, .DEX = 1, .WIL = 1}
+	shadow := new_npc(.Shadow)
+	for _ in 0 ..< 40 { // the shadow wins some exchanges and drains
+		resolve_attack(&r, &shadow, &pc, .Melee)
+		if !pc.alive { break }
+	}
+	testing.expect(t, pc.str_drained > 0 || !pc.alive, "a shadow's hits drain STR")
+	pc.alive = true
+	rest(&pc)
+	testing.expect_value(t, pc.str_drained, 0)
+}
+
+@(test)
+data_tables_are_sane :: proc(t: ^testing.T) {
+	testing.expect_value(t, len(BELONGINGS), 40)
+	for b in BELONGINGS { testing.expect(t, len(b) > 0, "belonging has a name") }
+	for m in Monster {
+		def := MONSTERS[m]
+		testing.expect(t, def.hd >= 0 && def.skill >= 0 && def.dmg >= 1, def.name)
+		testing.expect(t, def.skill <= 14, "converted monsters cap Skill at 14")
+	}
+	for w in Weapon_Kind { testing.expect(t, WEAPONS[w].dmg >= 2, WEAPONS[w].name) }
+}
