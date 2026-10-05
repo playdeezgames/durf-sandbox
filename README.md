@@ -8,11 +8,11 @@ Working title: "Lost & Found of SPLORR!!". You work at a Lost Property Office an
 
 Design phase, with two prototype spikes done (no graphics yet):
 
-- `rules/`: a pure Odin DURF v2.2 rules engine (dice, Buffs and Breaks, opposed combat, Stress and slots, damage and HD death, morale, reaction, XP, character creation). 16 native tests.
-- `dungeon/`: a seeded delve engine (floors, sight, Reaction on sight, chase and flee, the Turn clock and torch, wandering monsters, loot against the slot limit). 15 native tests.
+- `rules/`: a pure Odin DURF v2.2 rules engine (dice, Buffs and Breaks, opposed combat, Stress and slots, damage and HD death, morale, reaction, XP, character creation, inventory, Ammo). 25 native tests.
+- `dungeon/`: a seeded delve engine (floors, sight, Reaction on sight, chase and flee, the Turn clock and torch, wandering monsters, pick up and drop against the slot limit, Ammo, gecko paralysis). 23 native tests.
 - `sim/`: bots that play thousands of fights and whole delves. Results are in `sim/results-*.txt`.
 
-Read `DESIGN.md` for the design, the decisions made so far and the findings, and `LEARNINGS.md` for lessons for the jam. `CLAUDE.md` is the guide for Claude Code sessions, including a future jam session that references this project.
+Work is tracked per spike in `todo/`. Read `DESIGN.md` for the design, the decisions made so far and the findings, and `LEARNINGS.md` for lessons for the jam. `CLAUDE.md` is the guide for Claude Code sessions, including a future jam session that references this project.
 
 ## Commands
 

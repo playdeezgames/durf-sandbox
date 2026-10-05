@@ -33,7 +33,7 @@ Group :: struct {
 // per round); true = the side that wins initiative is the only one that attacks that round.
 ONE_EXCHANGE_PER_ROUND := false
 
-Outcome :: enum { Won, Fled, Died, Timeout }
+Outcome :: enum { Won, Fled, Died, Timeout } // Fled includes being stunned (the group leaves; Turns are lost)
 
 Result :: struct {
 	out:    Outcome,
@@ -52,17 +52,25 @@ Fight :: struct {
 	pol:     Policy,
 	res:     Result,
 	deaths:  int,
+	stunned: bool,
 }
 
+// A random starting character (attributes and gold) in a fixed kit: two Supplies, a dagger and three
+// junk belongings, plus the kit's weapon (with Ammo if it needs it), armor and shield.
 make_pc :: proc(r: ^R.Rng, kit: Kit) -> R.Creature {
 	c := R.new_character(r)
-	c.weapon = kit.weapon
-	c.armor_max = R.ARMORS[kit.armor].armor
-	c.armor = c.armor_max
-	c.shield = kit.shield
-	c.item_slots = c.supply + 1 + 3 // supplies, the dagger and three belongings
-	if kit.weapon != .Dagger { c.item_slots += R.WEAPONS[kit.weapon].slots }
-	c.item_slots += R.ARMORS[kit.armor].slots + (1 if kit.shield else 0)
+	c.inv = {}
+	c.inv_count = 0
+	c.armor, c.armor_max, c.shield, c.worn = 0, 0, false, false
+	for _ in 0 ..< R.STARTING_SUPPLY { R.add_item(&c, R.item_supply()) }
+	R.add_item(&c, R.item_weapon(.Dagger))
+	for _ in 0 ..< 3 { R.add_item(&c, R.item_junk("Junk")) }
+	if kit.weapon != .Dagger {
+		R.add_item(&c, R.item_weapon(kit.weapon))
+		if R.WEAPONS[kit.weapon].uses_ammo { R.add_item(&c, R.item_ammo()) }
+	}
+	if kit.armor != .None { R.add_item(&c, R.item_armor(kit.armor)) }
+	if kit.shield { R.add_item(&c, R.item_shield()) }
 	return c
 }
 
@@ -100,7 +108,7 @@ pc_act :: proc(f: ^Fight) -> (fled: bool) {
 	if f.pc.wounds >= f.pol.flee_at { f.res.out = .Fled; return true }
 	t := first_target(f)
 	if t == nil { return }
-	kind := R.Attack_Kind.Ranged if R.WEAPONS[f.pc.weapon].ranged else R.Attack_Kind.Melee
+	kind := R.Attack_Kind.Ranged if R.can_fire(f.pc^) else R.Attack_Kind.Melee
 	R.resolve_attack(f.r, f.pc, t, kind, f.pol.push_att)
 	note_deaths(f)
 	return
@@ -114,7 +122,7 @@ monsters_act :: proc(f: ^Fight) {
 		for _ in 0 ..< actions {
 			if !f.pc.alive || !m.alive { break }
 			if .Stun_Call in m.abilities && !m.stun_used {
-				R.stun_call(f.r, m, f.pc)
+				if R.stun_call(f.r, m, f.pc) > 0 { f.stunned = true; return } // paralysed for Turns: the group leaves
 				continue
 			}
 			kind := R.Attack_Kind.Ranged if m.ranged else R.Attack_Kind.Melee
@@ -139,6 +147,7 @@ fight :: proc(r: ^R.Rng, pc: ^R.Creature, group: []R.Monster, pol: Policy) -> Re
 				monsters_act(&f)
 			}
 			if !pc.alive { f.res.out = .Died; break loop }
+			if f.stunned { f.res.out = .Fled; break loop }
 			if living(&f) == 0 { f.res.out = .Won; break loop }
 		}
 		if pc.paralyzed > 0 { pc.paralyzed -= 1 }
@@ -180,7 +189,15 @@ main :: proc() {
 	runs := 4000
 	mode := "delves"
 	for a in os.args[1:] {
-		if a == "debug" { debug_timeouts = true } else if a == "fights" || a == "delves" { mode = a } else if v, ok := strconv.parse_int(a); ok { runs = v }
+		if a == "debug" { debug_timeouts = true } else if a == "fights" || a == "delves" || a == "trace" { mode = a } else if v, ok := strconv.parse_int(a); ok { runs = v }
+	}
+	if mode == "trace" { // sim trace: the stuck seed, Careful bot, Sword+Light, depth 1
+		trace_on = true
+		r: R.Rng
+		R.rng_seed(&r, 1)
+		res := play_delve(&r, 1000101, 1, KITS[2], BOTS[1])
+		fmt.println(res)
+		return
 	}
 	if mode == "delves" {
 		r: R.Rng
@@ -189,7 +206,8 @@ main :: proc() {
 		return
 	}
 	fmt.printf("DURF rules %s. %d fights per cell, fresh random character each, abstract melee (no map).\n", R.RULES_VERSION, runs)
-	fmt.println("Cell = Won% / Fled% / Died%  (Fled = left the fight alive; Timeout counted as Fled)\n")
+	fmt.println("Cell = Won% / Fled% / Died%  (Fled = left the fight alive, or was stunned and left helpless for Turns; Timeout counted as Fled)")
+	fmt.println("Abstract fights ignore Ammo and distance.\n")
 	r: R.Rng
 	R.rng_seed(&r, 20261004)
 	hd_table(&r, runs)

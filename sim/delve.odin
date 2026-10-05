@@ -16,13 +16,15 @@ Bot :: struct {
 	push_att:         int,
 	push_def:         int,
 	loot_goal:        int, // go home after carrying this many items
+	drop_junk:        bool, // drop junk belongings to fit a lost item (decision F)
 }
 
 BOTS := [?]Bot{
-	{"Brave (fights everything)", 999, 99, true, false, 0, 0, 99},
-	{"Careful (flees big threats)", 7, 2, false, false, 0, 0, 99},
-	{"Careful + pushes", 7, 2, false, false, 1, 1, 99},
-	{"Coward (flees any hunter)", 0, 1, false, false, 0, 0, 99},
+	{"Brave (fights everything)", 999, 99, true, false, 0, 0, 99, true},
+	{"Careful (flees big threats)", 7, 2, false, false, 0, 0, 99, true},
+	{"Careful, never drops", 7, 2, false, false, 0, 0, 99, false},
+	{"Careful + pushes", 7, 2, false, false, 1, 1, 99, true},
+	{"Coward (flees any hunter)", 0, 1, false, false, 0, 0, 99, true},
 }
 
 Ending :: enum { Died, Home_done, Home_light, Home_hurt, Home_fled, Home_stuck, Timeout }
@@ -41,6 +43,13 @@ Delve_Result :: struct {
 }
 
 debug_timeouts := false
+trace_on := false // print one line per bot decision (use: sim trace)
+replaying := false
+
+junk_index :: proc(d: ^D.Delve) -> int {
+	for i in 0 ..< d.pc.inv_count { if d.pc.inv[i].kind == .Junk { return i } }
+	return -1
+}
 
 hunters_count :: proc(d: ^D.Delve) -> int { _, n := hunting_danger(d); return n }
 
@@ -81,7 +90,7 @@ engage :: proc(d: ^D.Delve, i: int) {
 	blocked: D.Blocked
 	for j in 0 ..< d.mob_count { if D.blocks_pc(d.mobs[j]) && j != i { blocked[d.mobs[j].pos.y][d.mobs[j].pos.x] = true } }
 	D.bfs(d, d.mobs[i].pos, &g, &blocked)
-	ranged := R.WEAPONS[d.pc.weapon].ranged && D.los(d, d.pos, d.mobs[i].pos)
+	ranged := R.can_fire(d.pc) && D.los(d, d.pos, d.mobs[i].pos)
 	if g[d.pos.y][d.pos.x] == D.INF && !ranged {
 		if j := D.first_blocker(d, d.mobs[i].pos); j >= 0 && j != i { D.round_fight(d, j); return }
 	}
@@ -107,6 +116,7 @@ go_home :: proc(d: ^D.Delve, why: Ending) -> (ending: Ending, done: bool) {
 }
 
 play_delve :: proc(r: ^R.Rng, seed: u64, depth: int, kit: Kit, bot: Bot) -> (res: Delve_Result) {
+	saved := r^
 	d: D.Delve
 	D.init_delve(&d, seed, depth, make_pc(r, kit), bot.push_att, bot.push_def)
 	D.notice(&d)
@@ -117,6 +127,11 @@ play_delve :: proc(r: ^R.Rng, seed: u64, depth: int, kit: Kit, bot: Bot) -> (res
 	last_pos := d.pos
 	loop: for iter in 0 ..< 700 {
 		if d.result != .Running { break }
+		if trace_on && (iter < 60 || iter > 640) {
+			tot, n := hunting_danger(&d)
+			fmt.printf("iter %d pos %v turn %d light %d wounds %d hunters %d danger %d heading_home %v items %d slots_free %d\n", iter, d.pos, d.turns, d.light, d.pc.wounds, n, tot, heading_home, D.lost_count(&d), R.slots_free(d.pc))
+			for i in 0 ..< d.mob_count { m := d.mobs[i]; if m.c.alive && (m.state == .Hunting || m.state == .Fled) { fmt.printf("    %s %v %v seen=%v\n", m.c.name, m.pos, m.state, D.can_see(&d, m.pos)) } }
+		}
 		if d.pos == last_pos { stuck += 1 } else { stuck = 0; last_pos = d.pos }
 
 		// 1. something hunting us
@@ -141,7 +156,7 @@ play_delve :: proc(r: ^R.Rng, seed: u64, depth: int, kit: Kit, bot: Bot) -> (res
 		switch {
 		case d.light <= 1:                 why = .Home_light
 		case d.pc.wounds >= bot.flee_wounds: why = .Home_hurt
-		case d.items >= bot.loot_goal:     why = .Home_done
+		case D.lost_count(&d) >= bot.loot_goal: why = .Home_done
 		case stuck >= 4:                   why = .Home_stuck
 		}
 		if why != nil && why != .Died {
@@ -169,6 +184,21 @@ play_delve :: proc(r: ^R.Rng, seed: u64, depth: int, kit: Kit, bot: Bot) -> (res
 			}
 			avoid[d.pos.y][d.pos.x] = false
 		}
+		// 3b. standing on a lost item: take it, dropping junk first if that makes it fit
+		for i in 0 ..< d.loot_count {
+			l := d.loot[i]
+			if l.taken || l.dropped || l.pos != d.pos { continue }
+			if !R.can_carry(d.pc, l.item) && bot.drop_junk {
+				for _ in 0 ..< 8 { // capped: an unbounded loop here would hang the whole run
+					if R.slots_free(d.pc) >= l.item.slots { break }
+					j := junk_index(&d)
+					if j < 0 { break }
+					D.round_drop(&d, j)
+					stuck = 0 // an action, not being stuck
+				}
+			}
+			if R.can_carry(d.pc, l.item) { D.round_pickup(&d); stuck = 0; continue loop }
+		}
 		goal: D.Pos
 		have_goal := false
 		g: D.Grid
@@ -177,9 +207,11 @@ play_delve :: proc(r: ^R.Rng, seed: u64, depth: int, kit: Kit, bot: Bot) -> (res
 		if have_avoid { for y in 0 ..< D.H { for x in 0 ..< D.W { if avoid[y][x] { blocked[y][x] = true } } } }
 		D.bfs(&d, d.pos, &g, &blocked)
 		best := D.INF
+		junk_slots := 0
+		if bot.drop_junk { for i in 0 ..< d.pc.inv_count { if d.pc.inv[i].kind == .Junk { junk_slots += d.pc.inv[i].slots } } }
 		for i in 0 ..< d.loot_count {
 			l := d.loot[i]
-			if l.taken || !l.seen || R.slots_free(d.pc) < l.slots { continue }
+			if l.taken || l.dropped || !l.seen || R.slots_free(d.pc) + junk_slots < l.item.slots { continue }
 			if dist := g[l.pos.y][l.pos.x]; dist < best { best = dist; goal = l.pos; have_goal = true }
 		}
 		if !have_goal {
@@ -198,24 +230,33 @@ play_delve :: proc(r: ^R.Rng, seed: u64, depth: int, kit: Kit, bot: Bot) -> (res
 		}
 		D.round_move(&d, goal, &avoid if have_avoid else nil)
 	}
-	if d.result == .Running && debug_timeouts {
-		fmt.printf("TIMEOUT seed %d depth %d: pos %v stairs %v light %d turns %d items %d hunters %d wounds %d heading_home %v stuck %d visited %v\n", seed, depth, d.pos, d.stairs, d.light, d.turns, d.items, hunters_count(&d), d.pc.wounds, heading_home, stuck, d.visited)
+	if d.result == .Running && debug_timeouts && !replaying && !trace_on {
+		fmt.printf("--- replaying a timeout: %s, seed %d, depth %d, %s\n", bot.name, seed, depth, kit.name)
+		replaying = true
+		trace_on = true
+		rr := saved
+		play_delve(&rr, seed, depth, kit, bot)
+		trace_on = false
+		replaying = false
+	}
+	if d.result == .Running && debug_timeouts && !replaying {
+		fmt.printf("TIMEOUT seed %d depth %d: pos %v stairs %v light %d turns %d items %d hunters %d wounds %d heading_home %v stuck %d visited %v\n", seed, depth, d.pos, d.stairs, d.light, d.turns, D.lost_count(&d), hunters_count(&d), d.pc.wounds, heading_home, stuck, d.visited)
 		for i in 0 ..< d.mob_count { m := d.mobs[i]; if m.c.alive { fmt.printf("   %s at %v state %v seen %v\n", m.c.name, m.pos, m.state, m.seen) } }
 	}
 	for i in 0 ..< d.room_count { if d.visited[i] { res.rooms_visited += 1 } }
-	for i in 0 ..< d.loot_count { if d.loot[i].seen { res.loot_seen += 1 } }
+	for i in 0 ..< d.loot_count { if d.loot[i].seen && !d.loot[i].dropped { res.loot_seen += 1 } }
 	res.slots_free_end = R.slots_free(d.pc)
 	res.rounds = d.rounds
 	res.turns = d.turns
-	res.items = d.items
+	res.items = D.lost_count(&d)
 	switch d.result {
 	case .Died:
 		res.ending = .Died
 		res.killer = d.killer
 	case .Exited:
 		res.ending = going_home
-		res.gold = d.carried_gp
-		res.xp = d.xp + d.carried_gp // 1 GP of treasure returned is 1 XP, plus 25 per HD defeated
+		res.gold = D.lost_gp(&d)
+		res.xp = d.xp + D.lost_gp(&d) // 1 GP of treasure returned is 1 XP, plus 25 per HD defeated
 	case .Running:
 		res.ending = .Timeout
 	}
@@ -249,23 +290,23 @@ delve_report :: proc(r: ^R.Rng, runs: int) {
 		fmt.println()
 	}
 	// who kills us, and how do delves end, for the careful bot on depth 1 with the Sword+Light kit
-	// where does the loot go? Careful bot, Sword+Light, depth 1
-	{
+	// where does the loot go? Careful bot, Sword+Light, depth 1, with and without dropping junk
+	for bi in 1 ..= 2 {
 		d: D.Delve
 		tot_loot, tot_items, tot_rooms, tot_visited, tot_gold_avail, tot_seen, tot_free := 0, 0, 0, 0, 0, 0, 0
 		for n in 0 ..< runs {
 			seed := u64(1 * 1_000_003 + n + 1)
-			res := play_delve(r, seed, 1, KITS[2], BOTS[1])
+			res := play_delve(r, seed, 1, KITS[2], BOTS[bi])
 			D.init_delve(&d, seed, 1, make_pc(r, KITS[2]))
 			tot_loot += d.loot_count
-			for i in 0 ..< d.loot_count { tot_gold_avail += d.loot[i].gp }
+			for i in 0 ..< d.loot_count { tot_gold_avail += d.loot[i].item.gp }
 			tot_rooms += d.room_count
 			tot_items += res.items
 			tot_visited += res.rooms_visited
 			tot_seen += res.loot_seen
 			tot_free += res.slots_free_end
 		}
-		fmt.printf("Depth 1 floors: %.1f rooms, %.1f lost items worth %.0f GP in total; the careful bot returned %.1f items (visited %.1f rooms, saw %.1f items, %.1f slots free at the end)\n", f64(tot_rooms) / f64(runs), f64(tot_loot) / f64(runs), f64(tot_gold_avail) / f64(runs), f64(tot_items) / f64(runs), f64(tot_visited) / f64(runs), f64(tot_seen) / f64(runs), f64(tot_free) / f64(runs))
+		fmt.printf("Depth 1 floors, %s: %.1f rooms, %.1f lost items worth %.0f GP; returned %.1f items (visited %.1f rooms, saw %.1f items, %.1f slots free at the end)\n", BOTS[bi].name, f64(tot_rooms) / f64(runs), f64(tot_loot) / f64(runs), f64(tot_gold_avail) / f64(runs), f64(tot_items) / f64(runs), f64(tot_visited) / f64(runs), f64(tot_seen) / f64(runs), f64(tot_free) / f64(runs))
 	}
 	for depth in 1 ..= 3 {
 		bot := BOTS[1]

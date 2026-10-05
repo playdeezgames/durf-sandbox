@@ -53,3 +53,28 @@ A running log of what to reuse or avoid in the real jam. Newest at the bottom.
 - Decision E: depth threats are ranged monsters and darkness (no faster monsters, which would be an invented rule). Knobs: ranged share of the roster, torch length, wanderer die.
 - Decision F: players can drop and pick up items; the junk belongings are the bag's pressure valve. The sim's income numbers (1.9 of 4.9 items returned) assumed no dropping and must be rerun with a drop policy.
 - Decision G: the book's Ammo rule (a d6 after a fight, 1 = one shot left) is implemented to tame ranged weapons. Decisions A to G are now all made; the next spike (A3) reruns the sim with drop, ammo, and more ranged monsters.
+
+## Oct 5: rule readings decided (walk-through)
+
+- Reading each ambiguous rule one by one with the exact book text and its effect on the numbers made the decisions quick and let the user choose a faithful reading in four of six cases (sum of HD dice, attacker-only crits, 0 XP for 0 HD, PC-only worn weapons). Do this for the jam: list ambiguities with the quote, the options and a number, rather than asking for approval of a bundle.
+- A literal reading can be too harsh to play (Echo Gecko paralysis for 1d4 *Turns*, i.e. 10 to 40 minutes). The user's answer was a house rule that keeps the literal duration and removes the death sentence: the stunners leave, the cost is time. When a literal rule collides with permadeath, look for the version that costs time or resources instead of the run.
+- Darkness: sight-only for now (no Break on rolls); decide after playtesting.
+- Saved best run: yes, in localStorage, guarded so the game works without it (the Artifact/itch embed guidance: storage can be empty or throw).
+- Spells in the practice build: Bolt and Healing Hand only, with a short Blunders table.
+- Order of work: A3 (apply decided rules, ammo, drop, rosters, rerun sims), then Spike B (render).
+
+## Oct 5: process decisions
+
+- **One TODO file per spike** in `todo/` with `- [ ]` checkboxes keeps the work visible and the design doc free of task lists. Start each spike by writing its file, tick boxes as work is verified.
+- The jam's "No AI art" rule: the product owner decided that CC0 art (public domain) counts as a "provided resource". DURF 2.4 no longer matters for this prototype.
+
+## Spike A3: applying the decisions (Oct 5)
+
+- **What was done:** an item inventory (equipment derived from it), explicit drop and pick up, Ammo, attacker-only crits, PC-only weapon wear, the gecko stun as lost Turns, two house ranged monsters, depth rosters; rules 25 tests, dungeon 23. Findings: `DESIGN.md`, "Spike A3 findings".
+- **A rerun after a rules change is a different experiment.** A3's numbers differ from A2 for known reasons (gecko rule, dropping, ranged monsters). Keep a comparison table of old versus new and explain each difference, so a result is never just "different".
+- **One fix can invalidate an earlier conclusion.** "Armor halves your income" (A2) disappeared once dropping existed. State conclusions with their assumptions ("assuming the bot never drops") so they can be retired cleanly.
+- **Bots find infinite loops in your actions.** Two came from the same cause: an action whose result depends on array order (`pick_up` returned junk the bot had just dropped) and an uncapped inner loop. Give every action an unambiguous target, cap every bot loop, and have the sim replay any timed-out delve with a trace (`sim delves debug`).
+- **Add a trace mode at the start.** `sim trace` plus a replay-with-trace for timeouts (saving the RNG state before each delve) made the stuck bot visible in minutes.
+- **Odin:** `pkill -x name` (exact process name) is safe where `pkill -f` is not; `until [ -f flag ]; do sleep 2; done` in a command with `run_in_background` (or a `timeout`) is the way to wait for a long background job; unbounded loops that call an action which can fail will hang a batch run.
+- Decision L: accept the faster levelling (HD 2 after about 4 shallow or 2 to 3 deep delves); amends decision B. Loot values and torch length are the tuning knobs.
+- Decision M: leave the book's Ammo rule as written (combat is a failure state, so a strong bow only softens the failure state). All design decisions through M are made; Spike B (render) is next.

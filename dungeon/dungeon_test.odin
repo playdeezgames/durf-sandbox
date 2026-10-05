@@ -50,7 +50,7 @@ generation_is_connected_and_populated :: proc(t: ^testing.T) {
 			for i in 0 ..< d.loot_count {
 				l := d.loot[i]
 				testing.expect(t, walkable(&d, l.pos) && reachable_all(&d, l.pos, &g), "loot is reachable")
-				testing.expect(t, l.gp > 0 && l.slots >= 1, "loot has value and weight")
+				testing.expect(t, l.item.gp > 0 && l.item.slots >= 1 && l.item.kind == .Lost, "loot is a lost item with value and weight")
 			}
 			for i in 0 ..< d.mob_count {
 				m := d.mobs[i]
@@ -167,19 +167,43 @@ unseen_monsters_stay_idle :: proc(t: ^testing.T) {
 }
 
 @(test)
-loot_is_limited_by_free_slots :: proc(t: ^testing.T) {
+pick_up_is_explicit_and_limited_by_free_slots :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 10)
+	for d.pc.inv_count < R.MAX_ITEMS && R.slots_free(d.pc) > 1 { R.add_item(&d.pc, R.item_junk("x")) } // one slot free
+	d.loot[0] = Loot{pos = {11, 5}, item = {name = "big", kind = .Lost, slots = 2, gp = 100}}
+	d.loot[1] = Loot{pos = {12, 5}, item = {name = "small", kind = .Lost, slots = 1, gp = 50}}
+	d.loot_count = 2
+	round_move(&d, {12, 5}) // walks over both: nothing is taken by walking
+	testing.expect_value(t, lost_count(&d), 0)
+	testing.expect(t, !d.loot[1].taken, "walking onto an item does not take it")
+	round_pickup(&d)
+	testing.expect(t, d.loot[1].taken, "a 1 slot item fits into 1 free slot")
+	testing.expect_value(t, lost_gp(&d), 50)
+	testing.expect_value(t, R.slots_free(d.pc), 0)
+	d.pos = {11, 5}
+	round_pickup(&d)
+	testing.expect(t, !d.loot[0].taken, "a 2 slot item does not fit")
+}
+
+@(test)
+dropping_frees_slots_and_can_be_undone :: proc(t: ^testing.T) {
 	d: Delve
 	pc := hardy()
+	R.add_item(&pc, R.item_weapon(.Dagger))
+	R.add_item(&pc, R.item_armor(.Light))
+	R.add_item(&pc, R.item_junk("teeth"))
 	corridor(&d, pc, 10)
-	d.pc.item_slots = R.slots_total(d.pc) - 1 // one slot free
-	d.loot[0] = Loot{pos = {11, 5}, gp = 100, slots = 2}
-	d.loot[1] = Loot{pos = {12, 5}, gp = 50, slots = 1}
-	d.loot_count = 2
-	round_move(&d, {12, 5})
-	testing.expect(t, !d.loot[0].taken, "a 2 slot item does not fit into 1 free slot")
-	testing.expect(t, d.loot[1].taken, "a 1 slot item does")
-	testing.expect_value(t, d.carried_gp, 50)
-	testing.expect_value(t, R.slots_free(d.pc), 0)
+	free0 := R.slots_free(d.pc)
+	testing.expect_value(t, d.pc.armor_max, 3)
+	round_drop(&d, 2) // the junk
+	testing.expect_value(t, R.slots_free(d.pc), free0 + 1)
+	testing.expect(t, d.loot[d.loot_count - 1].dropped && d.loot[d.loot_count - 1].item.name == "teeth", "it lies on the floor")
+	round_drop(&d, 1) // the armor
+	testing.expect_value(t, d.pc.armor_max, 0) // dropping gear removes its effect
+	d.pos = d.pos // (standing on the dropped items)
+	round_pickup(&d) // picks up one item underfoot
+	testing.expect(t, R.slots_free(d.pc) < free0 + 1 + 1, "something was picked up again")
 }
 
 @(test)
@@ -253,4 +277,122 @@ the_pc_swaps_places_with_a_neutral_monster :: proc(t: ^testing.T) {
 	testing.expect_value(t, d.pos, d.stairs)
 	testing.expect(t, d.mobs[0].c.alive && d.mobs[0].state == .Neutral, "the goose is unharmed and still neutral")
 	testing.expect_value(t, first_blocker(&d, {30, 5}), -1)
+}
+
+@(test)
+ranged_player_shots_need_ammo :: proc(t: ^testing.T) {
+	d: Delve
+	pc := hardy()
+	R.add_item(&pc, R.item_weapon(.Dagger))
+	R.add_item(&pc, R.item_weapon(.Bow))
+	corridor(&d, pc, 10)
+	testing.expect_value(t, d.pc.weapon, R.Weapon_Kind.Dagger) // no Ammo: the bow is not wielded
+	R.add_item(&d.pc, R.item_ammo())
+	testing.expect_value(t, d.pc.weapon, R.Weapon_Kind.Bow)
+	testing.expect(t, R.can_fire(d.pc), "with Ammo the bow fires")
+}
+
+@(test)
+the_ammo_check_runs_when_a_fight_ends :: proc(t: ^testing.T) {
+	lows, n := 0, 3000
+	for seed in 1 ..= n {
+		d: Delve
+		pc := hardy()
+		R.add_item(&pc, R.item_weapon(.Bow))
+		R.add_item(&pc, R.item_ammo())
+		corridor(&d, pc, 10)
+		R.rng_seed(&d.rng, u64(seed))
+		d.pc.shot_this_fight = true // fired during the fight
+		turns0 := d.turns
+		end_fight(&d)
+		testing.expect_value(t, d.turns, turns0 + 1) // clean-up takes a Turn
+		testing.expect(t, !d.pc.shot_this_fight, "the check resets the flag")
+		if d.pc.ammo_low { lows += 1 }
+	}
+	testing.expectf(t, abs(f64(lows) / f64(n) - 1.0 / 6.0) < 0.03, "Ammo ran low in %d of %d fights", lows, n)
+}
+
+@(test)
+no_shots_no_ammo_check :: proc(t: ^testing.T) {
+	d: Delve
+	pc := hardy()
+	R.add_item(&pc, R.item_weapon(.Bow))
+	R.add_item(&pc, R.item_ammo())
+	corridor(&d, pc, 10)
+	for _ in 0 ..< 200 { end_fight(&d) }
+	testing.expect(t, !d.pc.ammo_low, "Ammo never runs low if the PC did not shoot")
+}
+
+@(test)
+only_the_eelfolk_reload :: proc(t: ^testing.T) {
+	for kind in ([?]R.Monster{.Eelfolk, .Crossbow_Cultist, .Blowpipe_Imp}) {
+		d: Delve
+		corridor(&d, hardy(), 10)
+		add_mob(&d, kind, 15, .Hunting)
+		d.mobs[0].c.stun_used = true
+		for _ in 0 ..< 4 {
+			monsters_act(&d)
+			if kind != .Eelfolk { testing.expect(t, !d.mobs[0].reloading, "only the pistol reloads") }
+		}
+	}
+}
+
+@(test)
+depth_two_and_three_rosters_have_ranged_monsters :: proc(t: ^testing.T) {
+	d: Delve
+	for depth in 2 ..= 3 {
+		ranged, total := 0, 0
+		for seed in 1 ..= 200 {
+			init_delve(&d, u64(seed), depth, hardy())
+			for i in 0 ..< d.mob_count { total += 1; if d.mobs[i].c.ranged { ranged += 1 } }
+		}
+		testing.expectf(t, f64(ranged) / f64(total) > 0.25, "depth %d: %d of %d monsters are ranged", depth, ranged, total)
+	}
+	// depth 1 stays the easy roster: no ranged monsters
+	for seed in 1 ..= 100 {
+		init_delve(&d, u64(seed), 1, hardy())
+		for i in 0 ..< d.mob_count { testing.expect(t, !d.mobs[i].c.ranged, "depth 1 has no ranged monsters") }
+	}
+}
+
+@(test)
+gecko_stun_costs_turns_and_the_geckos_wander_off :: proc(t: ^testing.T) {
+	stunned := 0
+	for seed in 1 ..= 400 {
+		d: Delve
+		pc := hardy()
+		pc.attrs = {.STR = 0, .DEX = 0, .WIL = 0} // fails the save 75 percent of the time
+		corridor(&d, pc, 20)
+		R.rng_seed(&d.rng, u64(seed))
+		add_mob(&d, .Echo_Gecko, 21, .Hunting)
+		add_mob(&d, .Echo_Gecko, 22, .Hunting)
+		d.mobs[1].group = d.mobs[0].group // one group
+		light0, turns0 := d.light, d.turns
+		monsters_act(&d)
+		if d.turns > turns0 {
+			lost := d.turns - turns0
+			if d.mob_count == 2 { // no wanderer joined
+				stunned += 1
+				testing.expect(t, lost >= 1 && lost <= 4, "1d4 Turns lost")
+				testing.expect_value(t, d.light, light0 - lost)
+				testing.expect_value(t, d.mobs[0].state, Mob_State.Neutral)
+				testing.expect_value(t, d.mobs[1].state, Mob_State.Neutral)
+				testing.expect_value(t, d.pc.paralyzed, 0) // helpless only during the Turns
+			}
+		}
+	}
+	testing.expect(t, stunned > 50, "stuns happened")
+}
+
+@(test)
+pick_up_prefers_lost_items_over_dropped_ones :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 10)
+	// a dropped junk record sits at a LOWER index than the lost item, both underfoot
+	d.loot[0] = Loot{pos = {10, 5}, item = R.item_junk("teeth"), dropped = true, seen = true}
+	d.loot[1] = Loot{pos = {10, 5}, item = {name = "Umbrella", kind = .Lost, slots = 1, gp = 90}}
+	d.loot_count = 2
+	testing.expect(t, pick_up(&d), "something is picked up")
+	testing.expect(t, d.loot[1].taken && !d.loot[0].taken, "the lost item comes first")
+	testing.expect_value(t, lost_count(&d), 1)
 }

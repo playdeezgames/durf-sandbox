@@ -143,7 +143,6 @@ attack_exchanges_obey_the_rules :: proc(t: ^testing.T) {
 		testing.expect_value(t, x.att_wins, x.att.total >= x.def.total) // ties to the attacker
 		if kind == .Ranged {
 			testing.expect(t, !x.hit_att, "a ranged target never hits back")
-			testing.expect(t, !x.def_crit, "a ranged target never crits")
 			testing.expect_value(t, x.dodged, !x.hit_def)
 		} else {
 			testing.expect(t, !x.dodged, "melee has no dodge")
@@ -160,7 +159,8 @@ attack_exchanges_obey_the_rules :: proc(t: ^testing.T) {
 
 @(test)
 stress_and_pushing_fill_slots :: proc(t: ^testing.T) {
-	c := Creature{is_pc = true, attrs = {.STR = 1, .DEX = 0, .WIL = 0}, item_slots = 10, alive = true}
+	c := Creature{is_pc = true, attrs = {.STR = 1, .DEX = 0, .WIL = 0}, alive = true}
+	for _ in 0 ..< 10 { add_item(&c, item_junk("junk")) }
 	testing.expect_value(t, slots_total(c), 11)
 	testing.expect_value(t, slots_free(c), 1)
 	testing.expect_value(t, push(&c, 3), 1) // only one slot free
@@ -218,7 +218,7 @@ xp_buys_hit_dice_automatically :: proc(t: ^testing.T) {
 	c = Creature{hd = HD_MAX, alive = true}
 	testing.expect_value(t, add_xp(&c, 999999), 0)
 	testing.expect_value(t, xp_for_defeating(4), 100)
-	testing.expect_value(t, xp_for_defeating(0), XP_PER_ZERO_HD)
+	testing.expect_value(t, xp_for_defeating(0), 0) // the literal 25 x HD rule: nothing for a 0 HD monster
 }
 
 @(test)
@@ -229,9 +229,10 @@ characters_follow_the_creation_rules :: proc(t: ^testing.T) {
 		c := new_character(&r)
 		for a in Attr { testing.expect(t, c.attrs[a] >= 1 && c.attrs[a] <= 3, "attributes are d3") }
 		testing.expect_value(t, c.hd, 1)
-		testing.expect_value(t, c.supply, 2)
+		testing.expect_value(t, count_items(c, .Supply), 2)
+		testing.expect(t, count_items(c, .Weapon) >= 1, "a dagger at least")
 		testing.expect(t, c.gold >= 10 && c.gold <= 60 && c.gold % 5 == 0, "gold is 2d6 x 5")
-		testing.expect(t, c.item_slots >= 6, "two Supply, a dagger and three belongings")
+		testing.expect(t, items_slots(c) >= 6, "two Supply, a dagger and three belongings")
 		if slots_used(c) > slots_total(c) { overloaded += 1 }
 	}
 	log.infof("starting characters carrying more than their slots: %d of 3000", overloaded)
@@ -263,4 +264,170 @@ data_tables_are_sane :: proc(t: ^testing.T) {
 		testing.expect(t, def.skill <= 14, "converted monsters cap Skill at 14")
 	}
 	for w in Weapon_Kind { testing.expect(t, WEAPONS[w].dmg >= 2, WEAPONS[w].name) }
+}
+
+@(test)
+only_the_attackers_natural_20_crits :: proc(t: ^testing.T) {
+	r := seeded(13)
+	def_20_seen := 0
+	for _ in 0 ..< 20000 {
+		a := mouse() // attacker: a monster with 2 damage
+		a.attrs = {.STR = 0, .DEX = 0, .WIL = 0}
+		b := titan() // defender: wins nearly every opposed roll
+		b.weapon = .Sword
+		x := resolve_attack(&r, &a, &b, .Melee)
+		if x.def.nat == CRIT_ROLL && x.att.nat != CRIT_ROLL {
+			def_20_seen += 1
+			testing.expect_value(t, x.dmg_att, WEAPONS[.Sword].dmg) // a defender's 20 is not doubled
+		}
+		b = titan()
+		b.alive = true
+	}
+	testing.expect(t, def_20_seen > 100, "the test saw defender 20s")
+}
+
+@(test)
+only_a_pcs_own_attack_roll_wears_its_weapon :: proc(t: ^testing.T) {
+	r := seeded(14)
+	saw_def_one := 0
+	for _ in 0 ..< 10000 {
+		a := mouse()
+		b := titan()
+		b.hd = 12
+		x := resolve_attack(&r, &a, &b, .Melee)
+		if x.def.nat == WORN_ROLL { saw_def_one += 1; testing.expect(t, !b.worn, "a defending PC's natural 1 does not wear its weapon") }
+	}
+	testing.expect(t, saw_def_one > 100, "the test saw defender 1s")
+	// the PC's own attack: natural 1 wears the weapon
+	worn_after_one := 0
+	for _ in 0 ..< 10000 {
+		a := titan()
+		a.hd = 12
+		b := mouse()
+		b.hd = 12
+		x := resolve_attack(&r, &a, &b, .Melee)
+		if x.att.nat == WORN_ROLL { testing.expect(t, a.worn, "the PC's own natural 1 wears the weapon"); worn_after_one += 1 }
+	}
+	testing.expect(t, worn_after_one > 100, "the test saw attacker 1s")
+}
+
+@(test)
+equipment_follows_the_inventory :: proc(t: ^testing.T) {
+	c := Creature{is_pc = true, attrs = {.STR = 3, .DEX = 1, .WIL = 1}, hd = 1, alive = true}
+	add_item(&c, item_weapon(.Dagger))
+	testing.expect_value(t, c.weapon, Weapon_Kind.Dagger)
+	add_item(&c, item_weapon(.Sword))
+	testing.expect_value(t, c.weapon, Weapon_Kind.Sword)
+	add_item(&c, item_armor(.Light))
+	add_item(&c, item_shield())
+	testing.expect_value(t, c.armor_max, 3)
+	testing.expect_value(t, c.armor, 3)
+	testing.expect(t, c.shield, "a shield in the bag is carried")
+	add_item(&c, item_armor(.Medium))
+	testing.expect_value(t, c.armor_max, 5)
+	testing.expect_value(t, c.armor, 5)
+	// dropping removes the effect
+	for i in 0 ..< c.inv_count { if c.inv[i].kind == .Weapon && c.inv[i].weapon == .Sword { remove_item(&c, i); break } }
+	testing.expect_value(t, c.weapon, Weapon_Kind.Dagger)
+	for i in 0 ..< c.inv_count { if c.inv[i].kind == .Armor && c.inv[i].armor == .Medium { remove_item(&c, i); break } }
+	testing.expect_value(t, c.armor_max, 3)
+	for i in 0 ..< c.inv_count { if c.inv[i].kind == .Shield { remove_item(&c, i); break } }
+	testing.expect(t, !c.shield, "the shield is gone")
+	// no weapons at all: fists
+	for c.inv_count > 0 { remove_item(&c, 0) }
+	testing.expect_value(t, c.weapon, Weapon_Kind.Unarmed)
+	testing.expect_value(t, c.armor_max, 0)
+}
+
+@(test)
+carrying_is_limited_by_slots :: proc(t: ^testing.T) {
+	c := Creature{is_pc = true, attrs = {.STR = 1, .DEX = 1, .WIL = 1}, hd = 1, alive = true} // 11 slots
+	for _ in 0 ..< 10 { add_item(&c, item_junk("x")) }
+	testing.expect_value(t, slots_free(c), 1)
+	testing.expect(t, can_carry(c, item_junk("one")), "a 1 slot item fits")
+	testing.expect(t, !can_carry(c, item_weapon(.Sword)), "a 2 slot weapon does not")
+	c.stress = 1
+	testing.expect(t, !can_carry(c, item_junk("one")), "Stress takes the last slot")
+}
+
+@(test)
+ranged_weapons_need_ammo_and_the_blowpipe_does_not :: proc(t: ^testing.T) {
+	c := Creature{is_pc = true, attrs = {.STR = 3, .DEX = 3, .WIL = 1}, hd = 1, alive = true}
+	add_item(&c, item_weapon(.Dagger))
+	add_item(&c, item_weapon(.Pistol))
+	testing.expect_value(t, c.weapon, Weapon_Kind.Dagger) // no Ammo, so the pistol is not usable
+	testing.expect(t, !can_fire(c), "a dagger is not a ranged weapon")
+	add_item(&c, item_ammo())
+	testing.expect_value(t, c.weapon, Weapon_Kind.Pistol)
+	testing.expect(t, can_fire(c), "pistol with Ammo fires")
+	c2 := Creature{is_pc = true, attrs = {.STR = 1, .DEX = 1, .WIL = 1}, hd = 1, alive = true}
+	add_item(&c2, item_weapon(.Blowpipe))
+	testing.expect_value(t, c2.weapon, Weapon_Kind.Blowpipe)
+	testing.expect(t, can_fire(c2), "the blowpipe needs no Ammo")
+}
+
+@(test)
+ammo_runs_low_on_a_one_and_is_used_up_by_the_next_shot :: proc(t: ^testing.T) {
+	r := seeded(15)
+	lows, n := 0, 6000
+	for _ in 0 ..< n {
+		c := Creature{is_pc = true, attrs = {.STR = 2, .DEX = 2, .WIL = 1}, hd = 1, alive = true}
+		add_item(&c, item_weapon(.Bow))
+		add_item(&c, item_ammo())
+		target := mouse()
+		target.hd = 12
+		testing.expect(t, !ammo_check(&r, &c), "no shot, no check")
+		resolve_attack(&r, &c, &target, .Ranged)
+		testing.expect(t, c.shot_this_fight, "firing is recorded")
+		if ammo_check(&r, &c) {
+			lows += 1
+			testing.expect_value(t, count_items(c, .Ammo), 1) // still there until the next shot
+			resolve_attack(&r, &c, &target, .Ranged)
+			testing.expect_value(t, count_items(c, .Ammo), 0) // the last shot used it up
+			testing.expect(t, !can_fire(c), "out of Ammo")
+			testing.expect_value(t, c.weapon, Weapon_Kind.Unarmed) // a bow with no Ammo is not wielded
+		}
+	}
+	testing.expectf(t, abs(f64(lows) / f64(n) - 1.0 / 6.0) < 0.02, "Ammo ran low in %d of %d fights", lows, n)
+}
+
+@(test)
+stun_call_returns_turns_and_only_once :: proc(t: ^testing.T) {
+	r := seeded(16)
+	stunned, n := 0, 6000
+	for _ in 0 ..< n {
+		g := new_npc(.Echo_Gecko)
+		pc := titan()
+		pc.attrs = {.STR = 2, .DEX = 2, .WIL = 2} // needs a 14+ to save: 35 percent
+		turns := stun_call(&r, &g, &pc)
+		testing.expect(t, turns >= 0 && turns <= 4, "0 or 1d4 Turns")
+		testing.expect_value(t, pc.paralyzed, 0) // the caller decides what the Turns mean
+		testing.expect_value(t, stun_call(&r, &g, &pc), 0) // once per fight
+		if turns > 0 { stunned += 1 }
+	}
+	testing.expectf(t, abs(f64(stunned) / f64(n) - 0.65) < 0.03, "stunned %d of %d", stunned, n)
+}
+
+@(test)
+belongings_give_the_listed_items :: proc(t: ^testing.T) {
+	for i in 0 ..< 40 {
+		items, n := belonging_items(i)
+		testing.expect(t, n >= 1 && n <= 2, "one or two items")
+		testing.expect(t, items[0].slots >= 1, "an item takes a slot")
+	}
+	bow, nb := belonging_items(2)
+	testing.expect_value(t, nb, 2)
+	testing.expect_value(t, bow[1].kind, Item_Kind.Ammo) // "Bow + Ammo"
+	_, np := belonging_items(16)
+	testing.expect_value(t, np, 2) // "Pistol + Ammo"
+}
+
+@(test)
+house_monsters_are_flagged_and_only_the_eelfolk_reload :: proc(t: ^testing.T) {
+	for m in Monster {
+		def := MONSTERS[m]
+		is_house := m == .Blowpipe_Imp || m == .Crossbow_Cultist
+		testing.expect_value(t, def.house, is_house)
+		testing.expect_value(t, .Reload in def.abilities, m == .Eelfolk)
+	}
 }

@@ -11,7 +11,7 @@ W :: 48
 H :: 32
 MAX_ROOMS :: 8
 MAX_MOBS :: 24
-MAX_LOOT :: 16
+MAX_LOOT :: 48 // lost items plus whatever the PC drops
 MAX_GROUPS :: 24
 
 SIGHT          :: 6 // tiles you can see by torchlight
@@ -39,12 +39,13 @@ Mob :: struct {
 	seen:      bool, // the PC has seen it at least once
 }
 
+// Something on the floor: a lost item to fetch, or anything the PC dropped.
 Loot :: struct {
-	pos:   Pos,
-	gp:    int,
-	slots: int,
-	taken: bool,
-	seen:  bool,
+	pos:     Pos,
+	item:    R.Item,
+	taken:   bool,
+	seen:    bool,
+	dropped: bool, // left by the PC (never auto-fetched by the bot, never counted as found)
 }
 
 Room :: struct { x, y, w, h: int }
@@ -79,8 +80,6 @@ Delve :: struct {
 	tiles_moved:  int,
 	turns:        int,
 	light:        int, // Turns of light left
-	carried_gp:   int,
-	items:        int,
 	xp:           int,
 	kills:        int,
 	rounds:       int, // combat rounds
@@ -122,7 +121,7 @@ rooms_overlap :: proc(a, b: Room) -> bool {
 tile_occupied :: proc(d: ^Delve, p: Pos) -> bool {
 	if p == d.pos { return true }
 	for i in 0 ..< d.mob_count { if d.mobs[i].c.alive && d.mobs[i].pos == p { return true } }
-	for i in 0 ..< d.loot_count { if d.loot[i].pos == p { return true } }
+	for i in 0 ..< d.loot_count { if !d.loot[i].taken && d.loot[i].pos == p { return true } }
 	return p == d.stairs
 }
 
@@ -184,8 +183,8 @@ pick_monster :: proc(d: ^Delve, depth: int) -> R.Monster {
 	roster: []R.Monster
 	switch depth {
 	case 1:  roster = {.Goose, .Goose, .Dog, .Dog, .Echo_Gecko, .Echo_Gecko}
-	case 2:  roster = {.Dog, .Echo_Gecko, .Myconid, .Myconid, .Eelfolk, .Spellclaw, .Shadow}
-	case:    roster = {.Myconid, .Eelfolk, .Spellclaw, .Spellclaw, .Shadow, .Shadow, .Flesh_Orb}
+	case 2:  roster = {.Dog, .Echo_Gecko, .Myconid, .Myconid, .Eelfolk, .Eelfolk, .Spellclaw, .Shadow, .Blowpipe_Imp, .Blowpipe_Imp, .Crossbow_Cultist}
+	case:    roster = {.Myconid, .Eelfolk, .Eelfolk, .Spellclaw, .Spellclaw, .Shadow, .Shadow, .Flesh_Orb, .Crossbow_Cultist, .Crossbow_Cultist, .Blowpipe_Imp}
 	}
 	return roster[R.d(&d.rng, len(roster)) - 1]
 }
@@ -193,7 +192,7 @@ pick_monster :: proc(d: ^Delve, depth: int) -> R.Monster {
 group_size :: proc(d: ^Delve, m: R.Monster) -> int {
 	switch m {
 	case .Goose, .Echo_Gecko: return ri(d, 1, 3)
-	case .Dog, .Myconid:      return ri(d, 1, 2)
+	case .Dog, .Myconid, .Blowpipe_Imp, .Crossbow_Cultist: return ri(d, 1, 2)
 	case .Eelfolk, .Spellclaw, .Shadow, .Flesh_Orb, .Dragon: return 1
 	}
 	return 1
@@ -218,6 +217,11 @@ place_group :: proc(d: ^Delve, room_idx: int, kind: R.Monster) -> bool {
 	return true
 }
 
+LOST_ITEMS := [?]string{
+	"Umbrella", "Left shoe", "Set of dentures", "Ledger", "Teapot", "Fiddle", "Wedding ring", "Spectacles",
+	"Pocket watch", "Hat", "Music box", "Parrot cage", "Wooden leg", "Letter", "Garden gnome", "Locket",
+}
+
 place_loot :: proc(d: ^Delve, room_idx: int) -> bool {
 	if d.loot_count >= MAX_LOOT { return false }
 	p, ok := random_free_tile(d, d.rooms[room_idx])
@@ -227,9 +231,17 @@ place_loot :: proc(d: ^Delve, room_idx: int) -> bool {
 	case 2: lo, hi = 80, 250
 	case 3: lo, hi = 150, 400
 	}
-	d.loot[d.loot_count] = Loot{pos = p, gp = ri(d, lo, hi), slots = 2 if R.d(&d.rng, 5) == 1 else 1}
+	it := R.Item{name = LOST_ITEMS[R.d(&d.rng, len(LOST_ITEMS)) - 1], kind = .Lost, slots = 2 if R.d(&d.rng, 5) == 1 else 1, gp = ri(d, lo, hi)}
+	d.loot[d.loot_count] = Loot{pos = p, item = it}
 	d.loot_count += 1
 	return true
+}
+
+// What the PC is carrying that is worth something: lost items only.
+lost_count :: proc(d: ^Delve) -> int { return R.count_items(d.pc, .Lost) }
+lost_gp :: proc(d: ^Delve) -> (gp: int) {
+	for i in 0 ..< d.pc.inv_count { if d.pc.inv[i].kind == .Lost { gp += d.pc.inv[i].gp } }
+	return
 }
 
 // ---------- geometry ----------
@@ -304,6 +316,13 @@ hunters_near :: proc(d: ^Delve) -> (n: int) {
 }
 
 // ---------- the clock ----------
+
+// The last hunter nearby is gone: cleaning up takes a Turn, and Ammo that was shot is checked.
+end_fight :: proc(d: ^Delve) {
+	lose_turn(d)
+	R.ammo_check(&d.rng, &d.pc)
+}
+
 
 new_turn :: proc(d: ^Delve) {
 	d.turns += 1
@@ -445,12 +464,12 @@ monsters_act :: proc(d: ^Delve) {
 		adjacent = manhattan(m.pos, d.pos) == 1
 		switch { // the action
 		case .Stun_Call in m.c.abilities && !m.c.stun_used && adjacent:
-			R.stun_call(&d.rng, &m.c, &d.pc)
-		case m.c.ranged && m.reloading:
+			if turns := R.stun_call(&d.rng, &m.c, &d.pc); turns > 0 { paralyse(d, i, turns) }
+		case .Reload in m.c.abilities && m.reloading:
 			m.reloading = false
 		case adjacent || can_shoot(d, m^):
 			mob_attack(d, i)
-			if m.c.ranged { m.reloading = true }
+			if .Reload in m.c.abilities { m.reloading = true }
 		case:
 			mob_step(d, i, &df) // a second move
 		}
@@ -459,16 +478,62 @@ monsters_act :: proc(d: ^Delve) {
 
 // ---------- the PC's round ----------
 
-pick_up :: proc(d: ^Delve) {
-	for i in 0 ..< d.loot_count {
-		l := &d.loot[i]
-		if !l.taken && l.pos == d.pos && R.slots_free(d.pc) >= l.slots {
+// Time lost outright (a fight's clean-up, paralysis): a Turn passes, and travel time catches up.
+lose_turn :: proc(d: ^Delve) {
+	new_turn(d)
+	d.tiles_moved = max(d.tiles_moved, d.turns * TILES_PER_TURN)
+}
+
+// The Echo Gecko's stun (house reading 8): the PC loses `turns` Turns helpless. The stunning group
+// loses interest and becomes Neutral. Each Turn burns torch and rolls the wanderer d6; a wandering
+// group that turns up and hunts gets one free attack per remaining Turn on the helpless PC.
+paralyse :: proc(d: ^Delve, by: int, turns: int) {
+	g := d.mobs[by].group
+	for i in 0 ..< d.mob_count {
+		if d.mobs[i].group == g && d.mobs[i].c.alive && d.mobs[i].state != .Fled { d.mobs[i].state = .Neutral }
+	}
+	for t in 1 ..= turns {
+		d.pc.paralyzed = turns - t + 1
+		first_new := d.mob_count
+		lose_turn(d)
+		if d.mob_count > first_new && d.mobs[first_new].state == .Hunting {
+			for _ in 0 ..< d.pc.paralyzed { if d.pc.alive { mob_attack(d, first_new) } }
+		}
+		if !d.pc.alive { break }
+	}
+	d.pc.paralyzed = 0
+}
+
+// ---------- floor items ----------
+
+// Takes what the PC is standing on, if it fits (explicit: the PC's action). Lost items come first,
+// then anything the PC dropped, so the order never depends on where records sit in the array.
+pick_up :: proc(d: ^Delve) -> bool {
+	for pass in 0 ..< 2 {
+		for i in 0 ..< d.loot_count {
+			l := &d.loot[i]
+			if l.taken || l.pos != d.pos || l.dropped != (pass == 1) || !R.can_carry(d.pc, l.item) { continue }
+			R.add_item(&d.pc, l.item)
 			l.taken = true
-			d.pc.item_slots += l.slots
-			d.carried_gp += l.gp
-			d.items += 1
+			return true
 		}
 	}
+	return false
+}
+
+// Puts inventory item `idx` on the floor at the PC's feet; it can be picked up again.
+drop_item :: proc(d: ^Delve, idx: int) -> bool {
+	if idx < 0 || idx >= d.pc.inv_count { return false }
+	slot := -1
+	for i in 0 ..< d.loot_count { if d.loot[i].taken { slot = i; break } } // reuse the record of something already picked up
+	if slot < 0 {
+		if d.loot_count >= MAX_LOOT { return false }
+		slot = d.loot_count
+		d.loot_count += 1
+	}
+	it := R.remove_item(&d.pc, idx)
+	d.loot[slot] = Loot{pos = d.pos, item = it, dropped = true, seen = true}
+	return true
 }
 
 // The first living monster on the shortest path (ignoring monsters) from the PC to dest, or -1.
@@ -513,7 +578,6 @@ pc_step_toward :: proc(d: ^Delve, dest: Pos, avoid: ^Blocked) -> bool {
 		if d.mobs[i].c.alive && d.mobs[i].state == .Neutral && d.mobs[i].pos == to { d.mobs[i].pos = d.pos }
 	}
 	d.pos = to
-	pick_up(d)
 	return true
 }
 
@@ -536,7 +600,7 @@ round :: proc(d: ^Delve, act: proc(d: ^Delve, ctx: rawptr), ctx: rawptr) {
 	if d.result != .Running { return }
 	if d.pc.paralyzed > 0 { d.pc.paralyzed -= 1 }
 	if fighting {
-		if hunters_near(d) == 0 { new_turn(d) } // cleaning up after a fight takes a Turn
+		if hunters_near(d) == 0 { end_fight(d) }
 	} else {
 		moved := manhattan(pos_before, d.pos)
 		d.tiles_moved += moved
@@ -569,7 +633,7 @@ round_fight :: proc(d: ^Delve, mob: int) {
 		i := (cast(^Fight_Order)ctx).mob
 		m := &d.mobs[i]
 		if !m.c.alive { return }
-		ranged := R.WEAPONS[d.pc.weapon].ranged
+		ranged := R.can_fire(d.pc)
 		if !(ranged && manhattan(d.pos, m.pos) <= RANGED_RANGE && los(d, d.pos, m.pos)) && manhattan(d.pos, m.pos) > 1 {
 			pc_step_toward(d, m.pos, nil)
 		}
@@ -582,6 +646,19 @@ round_fight :: proc(d: ^Delve, mob: int) {
 		if !m.c.alive { note_death(d, i) }
 		if !d.pc.alive { pc_died(d, m.kind) }
 	}, &order)
+}
+
+Item_Order :: struct { idx: int }
+
+// The PC's action: pick up what is underfoot (a round passes; hunting monsters act).
+round_pickup :: proc(d: ^Delve) {
+	round(d, proc(d: ^Delve, ctx: rawptr) { pick_up(d) }, nil)
+}
+
+// The PC's action: drop inventory item `idx`.
+round_drop :: proc(d: ^Delve, idx: int) {
+	order := Item_Order{idx}
+	round(d, proc(d: ^Delve, ctx: rawptr) { drop_item(d, (cast(^Item_Order)ctx).idx) }, &order)
 }
 
 // Leave by the stairs, banking what is carried. Only valid on the stairs tile.

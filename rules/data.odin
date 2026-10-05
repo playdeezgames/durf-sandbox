@@ -14,7 +14,7 @@ HD_START       :: 1
 HD_MAX         :: 12
 XP_PER_HD_COST :: 1000 // next HD costs this times the current HD
 XP_PER_NPC_HD  :: 25
-XP_PER_ZERO_HD :: 10 // house reading: 0 HD NPCs would pay nothing under the 25 x HD rule
+XP_PER_ZERO_HD :: 0 // the literal 25 x HD rule pays nothing for a 0 HD NPC (decided Oct 5)
 SUPPLY_COST    :: 5
 STARTING_SUPPLY :: 2
 WORN_DAMAGE    :: 1
@@ -25,23 +25,24 @@ Attr :: enum { STR, DEX, WIL }
 Weapon_Kind :: enum { Unarmed, Blowpipe, Dagger, Sword, Greatsword, Bow, Crossbow, Pistol }
 
 Weapon :: struct {
-	name:   string,
-	dmg:    int,
-	slots:  int, // total slots to carry
-	hands:  int,
-	price:  int,
-	ranged: bool,
+	name:      string,
+	dmg:       int,
+	slots:     int, // total slots to carry
+	hands:     int,
+	price:     int,
+	ranged:    bool,
+	uses_ammo: bool, // needs an Ammo item (the blowpipe, sling and dart do not)
 }
 
 WEAPONS := [Weapon_Kind]Weapon{
-	.Unarmed    = {"Fists", 2, 0, 1, 0, false},
-	.Blowpipe   = {"Blowpipe", 2, 1, 1, 2, true},
-	.Dagger     = {"Dagger", 3, 1, 1, 4, false},
-	.Sword      = {"Sword", 4, 2, 1, 10, false},
-	.Greatsword = {"Greatsword", 5, 3, 2, 15, false},
-	.Bow        = {"Bow", 3, 2, 2, 35, true},
-	.Crossbow   = {"Crossbow", 4, 3, 2, 30, true},
-	.Pistol     = {"Pistol", 5, 2, 1, 100, true},
+	.Unarmed    = {"Fists", 2, 0, 1, 0, false, false},
+	.Blowpipe   = {"Blowpipe", 2, 1, 1, 2, true, false},
+	.Dagger     = {"Dagger", 3, 1, 1, 4, false, false},
+	.Sword      = {"Sword", 4, 2, 1, 10, false, false},
+	.Greatsword = {"Greatsword", 5, 3, 2, 15, false, false},
+	.Bow        = {"Bow", 3, 2, 2, 35, true, true},
+	.Crossbow   = {"Crossbow", 4, 3, 2, 30, true, true},
+	.Pistol     = {"Pistol", 5, 2, 1, 100, true, true},
 }
 
 Armor_Kind :: enum { None, Light, Medium, Heavy }
@@ -60,14 +61,19 @@ ARMORS := [Armor_Kind]Armor{
 	.Heavy  = {"Heavy armor", 7, 3, 200},
 }
 SHIELD_PRICE :: 10
+SHIELD_SLOTS :: 1
+AMMO_PRICE :: 5
+AMMO_SLOTS :: 1
+AMMO_LOW_ROLL :: 1 // a d6 after a fight in which the PC shot: on this, one shot is left
 
 Ability :: enum {
 	Spores,       // when hit in melee, the attacker makes a STR save or takes 1 direct Wound
 	Drain_STR,    // a hit also lowers STR by 1 until a day's rest; STR below 0 kills
 	Stun_Call,    // once per fight, target makes a STR save or is paralyzed for 1d4 rounds
 	Extra_Action, // acts twice each round
-	Slippery,     // (not modelled in the spike)
-	Undead,       // (not modelled in the spike)
+	Reload,       // a pistol: every other action is spent reloading
+	Slippery,     // (not modelled yet)
+	Undead,       // (not modelled yet)
 }
 
 Monster_Def :: struct {
@@ -79,20 +85,24 @@ Monster_Def :: struct {
 	dmg:       int,
 	ranged:    bool,
 	abilities: bit_set[Ability],
+	house:     bool, // our own conversion, not a monster from the DURF book
 }
 
-Monster :: enum { Goose, Dog, Echo_Gecko, Myconid, Eelfolk, Spellclaw, Shadow, Flesh_Orb, Dragon }
+Monster :: enum { Goose, Dog, Echo_Gecko, Myconid, Eelfolk, Spellclaw, Shadow, Flesh_Orb, Dragon, Blowpipe_Imp, Crossbow_Cultist }
 
 MONSTERS := [Monster]Monster_Def{
-	.Goose      = {"Miniature goose", 1, 0, 0, 6, 1, false, {}},
-	.Dog        = {"Dog", 2, 1, 0, 6, 3, false, {}},
-	.Echo_Gecko = {"Echo Gecko", 2, 0, 0, 6, 2, false, {.Stun_Call}},
-	.Myconid    = {"Myconid", 3, 1, 3, 7, 3, false, {.Spores}},
-	.Eelfolk    = {"Eelfolk", 4, 1, 3, 7, 5, true, {.Slippery}},
-	.Spellclaw  = {"Spellclaw", 4, 2, 5, 7, 3, false, {}},
-	.Shadow     = {"Shadow", 3, 2, 0, -1, 3, false, {.Drain_STR, .Undead}},
-	.Flesh_Orb  = {"Flesh Orb of Zuld", 6, 5, 3, 9, 4, false, {}},
-	.Dragon     = {"Dragon", 12, 8, 10, 10, 12, false, {.Extra_Action}},
+	.Goose      = {"Miniature goose", 1, 0, 0, 6, 1, false, {}, false},
+	.Dog        = {"Dog", 2, 1, 0, 6, 3, false, {}, false},
+	.Echo_Gecko = {"Echo Gecko", 2, 0, 0, 6, 2, false, {.Stun_Call}, false},
+	.Myconid    = {"Myconid", 3, 1, 3, 7, 3, false, {.Spores}, false},
+	.Eelfolk    = {"Eelfolk", 4, 1, 3, 7, 5, true, {.Slippery, .Reload}, false},
+	.Spellclaw  = {"Spellclaw", 4, 2, 5, 7, 3, false, {}, false},
+	.Shadow     = {"Shadow", 3, 2, 0, -1, 3, false, {.Drain_STR, .Undead}, false},
+	.Flesh_Orb  = {"Flesh Orb of Zuld", 6, 5, 3, 9, 4, false, {}, false},
+	.Dragon     = {"Dragon", 12, 8, 10, 10, 12, false, {.Extra_Action}, false},
+	// House conversions (the book's "Converting OSR monsters" recipe), to give depth 2 and 3 more ranged threats.
+	.Blowpipe_Imp     = {"Blowpipe Imp", 2, 0, 0, 6, 2, true, {}, true}, // a blowpipe: 2 dmg, no reload
+	.Crossbow_Cultist = {"Crossbow Cultist", 3, 1, 3, 7, 4, true, {}, true}, // a crossbow: 4 dmg, no reload
 }
 
 Reaction :: enum { Hostile, Unfriendly, Indifferent, Friendly, Helpful }
