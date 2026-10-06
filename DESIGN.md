@@ -1,6 +1,6 @@
 # Lost & Found of SPLORR!! (working title)
 
-**Status: practice project. Design decisions A to G, 1 to 9 and the Oct 5 round (rule readings, dark, saved best, spells, order of work) are made; spikes A (rules and fight sim) and A2 (delves on a grid) are done; next is A3 and then Spike B (browser rendering).** This is a rehearsal for [DURF Jam 6](https://itch.io/jam/durf-jam-6) (Oct 14 to Nov 14, 2026, theme "Lost & Found"). The goal is to learn what works (rules to CRPG, stack, workflow, scope) so the real jam entry goes faster. Nothing here ships. Items marked **[OPEN]** need a decision from the product owner. Items marked **[TUNE]** are guesses to adjust by playing.
+**Status: practice project; Spike B (a playable browser build) exists and awaits the product owner's playtest. Design decisions A to G, 1 to 9 and the Oct 5 round (rule readings, dark, saved best, spells, order of work) are made; spikes A (rules and fight sim) and A2 (delves on a grid) are done; next is A3 and then Spike B (browser rendering).** This is a rehearsal for [DURF Jam 6](https://itch.io/jam/durf-jam-6) (Oct 14 to Nov 14, 2026, theme "Lost & Found"). The goal is to learn what works (rules to CRPG, stack, workflow, scope) so the real jam entry goes faster. Nothing here ships. Items marked **[OPEN]** need a decision from the product owner. Items marked **[TUNE]** are guesses to adjust by playing.
 
 Working model, as in the earlier SPLORR!! jam entries: the user is product owner and QA, Claude writes the code, and every agreed decision becomes an acceptance criterion the user can check by playing.
 
@@ -127,6 +127,21 @@ The engines now follow decisions D to G and the Oct 5 rule readings: an item inv
 
 - ~~L. Levelling speed~~ **Decided (Oct 5): accept it.** Keep the book's XP costs and the current loot values. Levelling comes every few delves (HD 2 after about 4 depth 1 or 2 to 3 depth 3 delves); gear is still the first progression and a level-up is the payoff that makes a 15 to 30 minute permadeath run worth chasing. This amends decision B's "slow burn". Loot values and torch length stay in data tables as tuning knobs; revisit after playtesting.
 - ~~M. Taming ranged weapons~~ **Decided (Oct 5): leave the book's Ammo rule as written.** Combat is a failure state (decision D) and a bow-user earns the same gold as anyone, so a strong bow only softens the failure state; it becomes a good emergency tool, not a way to farm. No new rule. Revisit only if the render spike shows a human abusing it.
+
+## Spike B findings (Oct 5, the delve in the browser)
+
+A playable build now exists: `./build.sh`, then serve `build/web`. Keys: arrows or WASD move (bumping attacks), Space waits, G picks up, X drops (then a number), F fires, P toggles Push, T walks to the stairs, Enter takes them, B shops, R rerolls the character before the first delve. `?seed=7&depth=2` starts a seeded delve; add `&hunter=4&hdist=5` to spawn a hunting monster (the Monster enum index) a few tiles away, for looking at fights. What I learned from playing it:
+
+1. **The book's round maps well onto keys.** Out of a fight every key press is its own round (a step or an action). In a fight the first press starts the round, rolls the initiative d6 and lets monsters that won it act first, and you then spend a move and an action in either order (an action can be a second move); the HUD shows `MV` and `AC` as they are used. Equal-speed flight works press by press (a test proves a flight from 3 tiles takes no bites).
+2. **Every roll is on screen**, and a death is always explained: `Dog > You: 22v13`, `Dog hit for 6 CRIT`, `You: wounds +6`, `HD roll 5 v 9 wounds: dies`. That is what makes the book's lethality acceptable under permadeath. The death screen repeats the last log lines.
+3. **It is deadly, as designed.** Two of my first three test deaths were a dog's critical hit and a single Eelfolk pistol shot against an unarmored 1 HD character, within one or two rounds. The simulator already said so (a dog kills a bare starting character about half the time in a fight); seeing it in person confirms that the first purchases (light armor 20 GP, a shield 10 GP) matter and that the player must be shown, from the first screen, that running is the answer. **Playtest question for the product owner: is the first delve too harsh, or is it the right tone?**
+4. **Hunters you cannot see must not be flagged.** The HUD first showed `HUNTED!` for a hunter in the dark; it now counts only visible hunters.
+5. **Walking home by hand is tedious**, so a `T` key walks to the stairs and stops when anything happens (a fight, a Reaction, a pick-up). It also keeps retreat cheap to test.
+6. **Things to watch in the next round of play**: how it feels to be paralysed by a gecko (lost Turns appear only as a torch drop), how readable the fog is with the loud orange floor, whether the 33-character log forces too many abbreviations, and whether the start screen explains enough (it says "Fighting rarely pays. Run.").
+
+## Planned: traps (Spike C)
+
+Added to the plan Oct 5 at the product owner's request: dungeon traps, with ways to detect and disable them, to be figured out later. The DURF 2.2 text has no trap rules (only a magic bear trap item), so traps are our own design built from the book's parts: a Turn is the time to search a room or pick a lock, saves are d20 + attribute over 15, and direct Wounds ignore Armor. The open design questions and the work list are in `todo/spike-c-traps.md`. Traps must fit decision D (avoidance is the game): they reward care, they are never mandatory, and under permadeath they should come with a fair chance (a clue or a save).
 
 ## Source material: the DURF Collection
 

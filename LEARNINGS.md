@@ -78,3 +78,23 @@ A running log of what to reuse or avoid in the real jam. Newest at the bottom.
 - **Odin:** `pkill -x name` (exact process name) is safe where `pkill -f` is not; `until [ -f flag ]; do sleep 2; done` in a command with `run_in_background` (or a `timeout`) is the way to wait for a long background job; unbounded loops that call an action which can fail will hang a batch run.
 - Decision L: accept the faster levelling (HD 2 after about 4 shallow or 2 to 3 deep delves); amends decision B. Loot values and torch length are the tuning knobs.
 - Decision M: leave the book's Ammo rule as written (combat is a failure state, so a strong bow only softens the failure state). All design decisions through M are made; Spike B (render) is next.
+
+## Spike B: the delve in the browser (Oct 5)
+
+- **What was built:** the game layer (`src/game.odin`, pure, 11 native tests), the web layer (`src/web.odin`, `web/index.html`), a phased human round in the engine (`pc_move`, `pc_attack`, `pc_wait`, events, fog), and QA hooks. About 1000 lines on top of A3. Findings: `DESIGN.md`, "Spike B findings".
+- **Refactor with a regression oracle.** The engine's `round` was rewritten into `begin_round` and `end_round` to support separate human inputs. Rerunning the delve simulator and diffing its output against the committed results proved the change was bit-for-bit identical. Keep committed simulator results for exactly this.
+- **Build tags on test files are not optional.** `_test.odin` files in packages imported by the wasm game are compiled in unless they start with `#+build !js`, and `core:os` then panics the build. The jam reference repo hid this because its tests were in the main package.
+- **Test text fit, don't eyeball it.** A test that generates every monster's attack, reaction, pickup and drop line and asserts <= 33 characters caught an overflow immediately (a " (push)" tag).
+- **A death must be explainable.** Showing the last log lines on the death screen turned a harsh result ("a dog crit killed me") into a legible one. Do this for any permadeath jam game.
+- **QA hooks pay back at once.** `?seed=&depth=&hunter=&hdist=` and a `window.sendKeys` snippet let me reach a fight in one navigation. Add them on day one of a jam.
+- **Don't leak hidden state in the HUD.** The first "HUNTED!" flag counted unseen hunters. Anything the HUD shows must be something the player could know.
+- **A "travel" key** (walk to the stairs, stop when anything happens) is cheap, makes retreat tolerable and makes QA quick.
+- **Odin on wasm notes:** `fmt.tprintf` is fine with `free_all(context.temp_allocator)` at the top of `step`; string concatenation with a conditional is not allowed (`"a" + ("b" if x else "")`), use two literals; exported hooks for JS are `proc "c"` with `context = ctx`.
+- **Sprite choice by sheet:** `tools/sprites.py` (labelled sheet of every tile the game uses, parsed from the source) found an empty tile (the barrel at (11,37)) at once. Check every assigned tile visually before building a scene on it.
+
+## Spike B playtest fixes (Oct 5)
+
+- **Serve with no-cache headers during playtests.** The plain `python3 -m http.server` lets the browser keep a stale `game.wasm`, so the user played the original build while I shipped fixes. `tools/serve.py` sends `Cache-Control: no-store`. Tell the tester how to hard-reload anyway.
+- **A rule with one verb can leave a gap.** Neutral monsters swap places, hunters are bump-attacked, so a friendly dog could never be attacked. Every state of a thing the player can reach needs a way to interact (here an explicit attack key).
+- **Hints must be generated from the key map, or they drift** (the drop hint said D while the key was X). A cheap guard: one table of key names used by both the handler and the text.
+- Traps are planned as Spike C (`todo/spike-c-traps.md`). The DURF 2.2 text has no trap rules, so they are our own design (flag as house content); a Turn already means "search a room or pick a lock".

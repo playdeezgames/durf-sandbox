@@ -1,0 +1,119 @@
+<!doctype html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>Lost & Found of SPLORR!!</title>
+	<style>
+		html, body { margin: 0; height: 100%; background: #111; }
+		body { display: flex; align-items: center; justify-content: center; }
+		canvas { width: min(100vw, 100vh); height: min(100vw, 100vh); background: #000; outline: none; }
+		#log { position: fixed; left: 0; bottom: 0; margin: 0; color: #aaa; font: 12px monospace; }
+	</style>
+</head>
+<body>
+	<canvas id="canvas" width="800" height="800" tabindex="0"></canvas>
+	<pre id="log"></pre>
+	<script src="odin.js"></script>
+	<script>
+		const cv = document.getElementById("canvas");
+		const g = cv.getContext("2d");
+		const rgb = (r, g, b, a = 1) => `rgba(${r * 255 | 0},${g * 255 | 0},${b * 255 | 0},${a})`;
+		// Browser storage can be missing or throw (private windows, previews): the game works without it.
+		const memoryStore = {};
+		const storeKey = (k) => "lostfound.best." + k;
+		// Imports for `foreign import canvas "canvas"` in src/web.odin.
+		const canvasImports = {
+			canvas: {
+				clear_canvas: (r, gr, b) => {
+					g.fillStyle = rgb(r, gr, b);
+					g.fillRect(0, 0, cv.width, cv.height);
+				},
+				// world units (y up) -> pixels (y down)
+				fill_rect: (x, y, w, h, r, gr, b, a, tiles) => {
+					const k = cv.width / tiles;
+					g.fillStyle = rgb(r, gr, b, a);
+					g.fillRect(x * k, cv.height - (y + h) * k, w * k, h * k);
+				},
+				store_get: (key) => {
+					try { const v = parseInt(localStorage.getItem(storeKey(key)), 10); return isNaN(v) ? 0 : v; }
+					catch (e) { return memoryStore[key] | 0; }
+				},
+				store_set: (key, value) => {
+					memoryStore[key] = value;
+					try { localStorage.setItem(storeKey(key), String(value)); } catch (e) { /* storage blocked */ }
+				},
+			},
+		};
+		// The tileset has opaque black backgrounds; knock them out so sprites sit on the floor.
+		let sheet = null, blueSheet = null, brightSheet = null;
+		const raw = new Image();
+		raw.onload = () => {
+			const c = document.createElement("canvas");
+			c.width = raw.naturalWidth; c.height = raw.naturalHeight;
+			const cg = c.getContext("2d");
+			cg.drawImage(raw, 0, 0);
+			const img = cg.getImageData(0, 0, c.width, c.height);
+			for (let i = 0; i < img.data.length; i += 4) {
+				if (img.data[i] + img.data[i + 1] + img.data[i + 2] === 0) img.data[i + 3] = 0;
+			}
+			cg.putImageData(img, 0, 0);
+			sheet = c;
+			// copy with red and blue swapped
+			const b = document.createElement("canvas");
+			b.width = c.width; b.height = c.height;
+			const bg = b.getContext("2d");
+			for (let i = 0; i < img.data.length; i += 4) {
+				const r = img.data[i];
+				img.data[i] = img.data[i + 2];
+				img.data[i + 2] = r;
+			}
+			bg.putImageData(img, 0, 0);
+			blueSheet = b;
+			// copy with every colour scaled up until its brightest channel is full
+			const br = document.createElement("canvas");
+			br.width = c.width; br.height = c.height;
+			const brg = br.getContext("2d");
+			const bright = cg.getImageData(0, 0, c.width, c.height);
+			for (let i = 0; i < bright.data.length; i += 4) {
+				const m = Math.max(bright.data[i], bright.data[i + 1], bright.data[i + 2]);
+				if (m > 0) {
+					const k = 255 / m;
+					bright.data[i] *= k; bright.data[i + 1] *= k; bright.data[i + 2] *= k;
+				}
+			}
+			brg.putImageData(bright, 0, 0);
+			brightSheet = br;
+		};
+		raw.src = "tileset.png";
+		g.imageSmoothingEnabled = false;
+		canvasImports.canvas.draw_sprite = (col, row, x, y, alpha, tiles, tint, size) => {
+			if (!sheet) return;
+			const src = tint === 1 ? blueSheet : tint === 2 ? brightSheet : sheet;
+			const k = cv.width / tiles;
+			g.globalAlpha = alpha;
+			g.drawImage(src, col * 13 + 1, row * 13 + 1, 12, 12, x * k, cv.height - (y + size) * k, k * size, k * size);
+			g.globalAlpha = 1;
+		};
+		const memory = new odin.WasmMemoryInterface();
+		odin.runWasm("game.wasm", document.getElementById("log"), canvasImports, memory);
+		cv.focus();
+		window.addEventListener("click", () => cv.focus());
+		// QA shortcut: index.html?seed=7&depth=2 starts a new run with that seed and drops into that depth.
+		const params = new URLSearchParams(location.search);
+		const wantedSeed = parseInt(params.get("seed"), 10);
+		const wantedDepth = parseInt(params.get("depth"), 10);
+		// ?hunter=1&hdist=3 adds a hunting monster (1 = Dog; see the Monster enum) a few tiles away.
+		const wantedHunter = parseInt(params.get("hunter"), 10);
+		const wantedDist = parseInt(params.get("hdist"), 10) || 3;
+		if (wantedSeed > 0 || wantedDepth > 0) {
+			const timer = setInterval(() => {
+				if (memory.exports && memory.exports.debug_start) {
+					clearInterval(timer);
+					memory.exports.debug_start(wantedSeed > 0 ? wantedSeed : 1, wantedDepth > 0 ? wantedDepth : 1);
+					if (wantedHunter >= 0) memory.exports.debug_hunter(wantedHunter, wantedDist);
+				}
+			}, 50);
+		}
+	</script>
+</body>
+</html>

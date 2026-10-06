@@ -52,6 +52,30 @@ Room :: struct { x, y, w, h: int }
 
 Result_Kind :: enum { Running, Exited, Died }
 
+// What happened, for a log the player can read. The game layer turns these into text and drains them.
+Event_Kind :: enum { Attack, Reaction, Mob_Fled, Mob_Died, Pickup, Drop, Light_Out, Stunned, Ammo_Low, Ammo_Gone }
+
+Event :: struct {
+	kind:     Event_Kind,
+	name:     string, // the monster, or the item
+	n:        int, // Turns lost, gold, ...
+	by_pc:    bool, // Attack: the PC attacked (else a monster attacked the PC)
+	x:        R.Exchange, // Attack: every roll
+	reaction: R.Reaction,
+}
+EVENT_CAP :: 64
+
+// One round as a person plays it: a move and an action, in either order.
+Round_State :: struct {
+	active:       bool,
+	had_hunters:  bool,
+	fighting:     bool,
+	pcs_first:    bool,
+	move_left:    int,
+	action_left:  int,
+	pos_before:   Pos,
+}
+
 Group_Info :: struct {
 	size:      int,
 	dead:      int,
@@ -84,10 +108,19 @@ Delve :: struct {
 	kills:        int,
 	rounds:       int, // combat rounds
 	result:       Result_Kind,
+	rd:           Round_State,
+	events:       [EVENT_CAP]Event,
+	event_count:  int,
+	explored:     [H][W]bool,
+	visible:      [H][W]bool,
 	killer:       R.Monster, // valid when result == .Died
 }
 
 in_bounds :: proc(p: Pos) -> bool { return p.x >= 0 && p.y >= 0 && p.x < W && p.y < H }
+emit :: proc(d: ^Delve, e: Event) {
+	if d.event_count < EVENT_CAP { d.events[d.event_count] = e; d.event_count += 1 }
+}
+
 walkable :: proc(d: ^Delve, p: Pos) -> bool { return in_bounds(p) && d.tiles[p.y][p.x] != .Wall }
 manhattan :: proc(a, b: Pos) -> int { return abs(a.x - b.x) + abs(a.y - b.y) }
 
@@ -320,13 +353,17 @@ hunters_near :: proc(d: ^Delve) -> (n: int) {
 // The last hunter nearby is gone: cleaning up takes a Turn, and Ammo that was shot is checked.
 end_fight :: proc(d: ^Delve) {
 	lose_turn(d)
-	R.ammo_check(&d.rng, &d.pc)
+	was_low := d.pc.ammo_low
+	if R.ammo_check(&d.rng, &d.pc) && !was_low { emit(d, Event{kind = .Ammo_Low}) }
 }
 
 
 new_turn :: proc(d: ^Delve) {
 	d.turns += 1
-	if d.light > 0 { d.light -= 1 }
+	if d.light > 0 {
+		d.light -= 1
+		if d.light == 0 { emit(d, Event{kind = .Light_Out}) }
+	}
 	if R.d(&d.rng, ENCOUNTER_DIE) == 1 { spawn_wanderers(d) }
 }
 
@@ -353,6 +390,9 @@ react_group :: proc(d: ^Delve, g: int) {
 	if !gi.reacted {
 		gi.reacted = true
 		gi.reaction = R.reaction_roll(&d.rng)
+		for i in 0 ..< d.mob_count {
+			if d.mobs[i].group == g { emit(d, Event{kind = .Reaction, name = d.mobs[i].c.name, reaction = gi.reaction}); break }
+		}
 	}
 	hunt := gi.reaction == .Hostile || gi.reaction == .Unfriendly
 	for i in 0 ..< d.mob_count {
@@ -369,8 +409,24 @@ provoke_group :: proc(d: ^Delve, g: int) {
 	}
 }
 
+// What the PC can see now (the torch's radius, with line of sight); seen tiles are remembered.
+update_fov :: proc(d: ^Delve) {
+	d.visible = {}
+	r := sight_radius(d)
+	for dy in -r ..= r {
+		for dx in -r ..= r {
+			if abs(dx) + abs(dy) > r { continue }
+			p := d.pos + Pos{dx, dy}
+			if !in_bounds(p) || !los(d, d.pos, p) { continue }
+			d.visible[p.y][p.x] = true
+			d.explored[p.y][p.x] = true
+		}
+	}
+}
+
 // Seeing a new group triggers its Reaction roll; seen things are remembered.
 notice :: proc(d: ^Delve) {
+	update_fov(d)
 	for i in 0 ..< d.mob_count {
 		m := &d.mobs[i]
 		if !m.c.alive || !can_see(d, m.pos) { continue }
@@ -389,12 +445,16 @@ note_death :: proc(d: ^Delve, i: int) {
 	m := &d.mobs[i]
 	d.kills += 1
 	d.xp += R.xp_for_defeating(m.c.hd)
+	emit(d, Event{kind = .Mob_Died, name = m.c.name, n = R.xp_for_defeating(m.c.hd)})
 	gi := &d.groups[m.group]
 	gi.dead += 1
 	if gi.dead == 1 || gi.dead * 2 >= gi.size {
 		for j in 0 ..< d.mob_count {
 			o := &d.mobs[j]
-			if o.group == m.group && mob_alive(o^) && R.morale_flees(&d.rng, o.c.ml) { o.state = .Fled }
+			if o.group == m.group && mob_alive(o^) && R.morale_flees(&d.rng, o.c.ml) {
+				o.state = .Fled
+				emit(d, Event{kind = .Mob_Fled, name = o.c.name})
+			}
 		}
 	}
 }
@@ -431,7 +491,8 @@ can_shoot :: proc(d: ^Delve, m: Mob) -> bool {
 mob_attack :: proc(d: ^Delve, i: int) {
 	m := &d.mobs[i]
 	kind := R.Attack_Kind.Ranged if m.c.ranged else R.Attack_Kind.Melee
-	R.resolve_attack(&d.rng, &m.c, &d.pc, kind, 0, d.push_def)
+	x := R.resolve_attack(&d.rng, &m.c, &d.pc, kind, 0, d.push_def)
+	emit(d, Event{kind = .Attack, name = m.c.name, by_pc = false, x = x})
 	if !m.c.alive { note_death(d, i) }
 	if !d.pc.alive { pc_died(d, m.kind) }
 }
@@ -489,6 +550,7 @@ lose_turn :: proc(d: ^Delve) {
 // group that turns up and hunts gets one free attack per remaining Turn on the helpless PC.
 paralyse :: proc(d: ^Delve, by: int, turns: int) {
 	g := d.mobs[by].group
+	emit(d, Event{kind = .Stunned, name = d.mobs[by].c.name, n = turns})
 	for i in 0 ..< d.mob_count {
 		if d.mobs[i].group == g && d.mobs[i].c.alive && d.mobs[i].state != .Fled { d.mobs[i].state = .Neutral }
 	}
@@ -515,6 +577,7 @@ pick_up :: proc(d: ^Delve) -> bool {
 			if l.taken || l.pos != d.pos || l.dropped != (pass == 1) || !R.can_carry(d.pc, l.item) { continue }
 			R.add_item(&d.pc, l.item)
 			l.taken = true
+			emit(d, Event{kind = .Pickup, name = l.item.name, n = l.item.gp})
 			return true
 		}
 	}
@@ -533,6 +596,7 @@ drop_item :: proc(d: ^Delve, idx: int) -> bool {
 	}
 	it := R.remove_item(&d.pc, idx)
 	d.loot[slot] = Loot{pos = d.pos, item = it, dropped = true, seen = true}
+	emit(d, Event{kind = .Drop, name = it.name})
 	return true
 }
 
@@ -581,37 +645,60 @@ pc_step_toward :: proc(d: ^Delve, dest: Pos, avoid: ^Blocked) -> bool {
 	return true
 }
 
-// One round. `act` is the PC's part; hunting monsters act before or after it by the initiative d6.
-// Monsters that start hunting this round only act from the next one.
-round :: proc(d: ^Delve, act: proc(d: ^Delve, ctx: rawptr), ctx: rawptr) {
-	if d.result != .Running { return }
-	had_hunters := hunters(d) > 0 || fleeing(d) // monsters act this round, wherever they are
-	fighting := hunters_near(d) > 0 // the clock only stops for a fight at hand
-	pos_before := d.pos
-	if had_hunters {
-		if fighting { d.rounds += 1 }
-		pcs_first := R.pcs_first(&d.rng)
-		if !pcs_first { monsters_act(d) }
-		if d.result == .Running { pc_part(d, act, ctx) }
-		if pcs_first && d.result == .Running { monsters_act(d) }
-	} else {
-		pc_part(d, act, ctx)
+// Starts a round: who is hunting, the initiative d6, and monsters that won it act first.
+begin_round :: proc(d: ^Delve) {
+	d.rd = Round_State{active = true, move_left = 1, action_left = 1}
+	d.rd.had_hunters = hunters(d) > 0 || fleeing(d) // monsters act this round, wherever they are
+	d.rd.fighting = hunters_near(d) > 0 // the clock only stops for a fight at hand
+	d.rd.pos_before = d.pos
+	if d.rd.had_hunters {
+		if d.rd.fighting { d.rounds += 1 }
+		d.rd.pcs_first = R.pcs_first(&d.rng)
+		if !d.rd.pcs_first { monsters_act(d) }
 	}
+}
+
+// Ends a round: monsters that lost the initiative act, then time passes and the PC looks around.
+end_round :: proc(d: ^Delve) {
+	rd := d.rd
+	d.rd.active = false
+	if rd.had_hunters && rd.pcs_first && d.result == .Running { monsters_act(d) }
 	if d.result != .Running { return }
 	if d.pc.paralyzed > 0 { d.pc.paralyzed -= 1 }
-	if fighting {
+	if rd.fighting {
 		if hunters_near(d) == 0 { end_fight(d) }
 	} else {
-		moved := manhattan(pos_before, d.pos)
+		moved := manhattan(rd.pos_before, d.pos)
 		d.tiles_moved += moved
 		for d.tiles_moved >= (d.turns + 1) * TILES_PER_TURN && d.result == .Running { new_turn(d) }
 	}
 	notice(d)
 }
 
+// One whole round with the PC's part given as a callback (used by the simulator's bots).
+round :: proc(d: ^Delve, act: proc(d: ^Delve, ctx: rawptr), ctx: rawptr) {
+	if d.result != .Running { return }
+	begin_round(d)
+	if d.result == .Running { pc_part(d, act, ctx) }
+	end_round(d)
+}
+
 pc_part :: proc(d: ^Delve, act: proc(d: ^Delve, ctx: rawptr), ctx: rawptr) {
 	if d.pc.paralyzed > 0 { return }
 	act(d, ctx)
+}
+
+// The PC attacks monster i (adjacent, or shot from range). Provokes the group if it was not hunting.
+pc_attack_mob :: proc(d: ^Delve, i: int, shot: bool) {
+	m := &d.mobs[i]
+	if m.state != .Hunting { provoke_group(d, m.group) }
+	kind := R.Attack_Kind.Ranged if shot else R.Attack_Kind.Melee
+	ammo_before := R.count_items(d.pc, .Ammo)
+	x := R.resolve_attack(&d.rng, &d.pc, &m.c, kind, d.push_att)
+	emit(d, Event{kind = .Attack, name = m.c.name, by_pc = true, x = x})
+	if R.count_items(d.pc, .Ammo) < ammo_before { emit(d, Event{kind = .Ammo_Gone}) }
+	if !m.c.alive { note_death(d, i) }
+	if !d.pc.alive { pc_died(d, m.kind) }
 }
 
 Move_Order :: struct { dest: Pos, avoid: ^Blocked }
@@ -640,11 +727,7 @@ round_fight :: proc(d: ^Delve, mob: int) {
 		adjacent := manhattan(d.pos, m.pos) == 1
 		shot := ranged && manhattan(d.pos, m.pos) <= RANGED_RANGE && los(d, d.pos, m.pos)
 		if !adjacent && !shot { return }
-		if m.state != .Hunting { provoke_group(d, m.group) }
-		kind := R.Attack_Kind.Ranged if shot else R.Attack_Kind.Melee
-		R.resolve_attack(&d.rng, &d.pc, &m.c, kind, d.push_att)
-		if !m.c.alive { note_death(d, i) }
-		if !d.pc.alive { pc_died(d, m.kind) }
+		pc_attack_mob(d, i, shot)
 	}, &order)
 }
 
@@ -666,4 +749,102 @@ exit_delve :: proc(d: ^Delve) -> bool {
 	if d.pos != d.stairs || d.result != .Running { return false }
 	d.result = .Exited
 	return true
+}
+
+// ---------- a person's round: separate inputs, a move and an action ----------
+//
+// Out of a fight every input is its own round (one tile of travel, or one action). In a fight the
+// first input starts the round (the initiative d6 is rolled and monsters that won it act first), the
+// PC gets a move and an action in either order (an action can be a second move), and the round ends
+// when both are used or the PC waits. Monsters that lost the initiative act when it ends.
+
+start_round :: proc(d: ^Delve) {
+	if !d.rd.active { begin_round(d) }
+}
+
+// After the PC uses a slot: out of a fight, or with nothing left, the round ends.
+spend :: proc(d: ^Delve, slot_is_move: bool) {
+	if slot_is_move && d.rd.move_left > 0 { d.rd.move_left -= 1 } else { d.rd.action_left -= 1 }
+	if d.result != .Running || !d.rd.had_hunters || d.rd.move_left + d.rd.action_left <= 0 { end_round(d) }
+}
+
+mob_at :: proc(d: ^Delve, p: Pos) -> int {
+	for i in 0 ..< d.mob_count { if d.mobs[i].c.alive && d.mobs[i].pos == p { return i } }
+	return -1
+}
+
+// Whether the PC could attack monster i right now, and whether it would be a shot: a usable ranged
+// weapon in sight shoots (even point blank, as the bot does); otherwise melee needs it adjacent.
+attackable :: proc(d: ^Delve, i: int) -> (ok: bool, shot: bool) {
+	m := d.mobs[i]
+	if !m.c.alive { return }
+	if R.can_fire(d.pc) && manhattan(d.pos, m.pos) <= RANGED_RANGE && can_see(d, m.pos) { return true, true }
+	if manhattan(d.pos, m.pos) == 1 { return true, false }
+	return
+}
+
+// A step in a direction. Walking into a monster attacks it (bump), into a neutral one swaps places.
+// Returns false (and spends nothing) if the move is not possible.
+pc_move :: proc(d: ^Delve, dir: Pos) -> bool {
+	if d.result != .Running { return false }
+	to := d.pos + dir
+	if !walkable(d, to) { return false }
+	if d.rd.active && d.rd.move_left + d.rd.action_left <= 0 { return false }
+	if i := mob_at(d, to); i >= 0 && blocks_pc(d.mobs[i]) { return pc_attack(d, i) }
+	start_round(d)
+	if d.result != .Running { end_round(d); return true } // the monsters that won initiative killed the PC
+	for i in 0 ..< d.mob_count { // swap with a neutral monster
+		if d.mobs[i].c.alive && d.mobs[i].state == .Neutral && d.mobs[i].pos == to { d.mobs[i].pos = d.pos }
+	}
+	d.pos = to
+	spend(d, true)
+	return true
+}
+
+// Attack monster i: needs the round's action. Melee when adjacent; a ranged weapon with Ammo shoots in sight.
+pc_attack :: proc(d: ^Delve, i: int) -> bool {
+	if d.result != .Running || i < 0 || i >= d.mob_count { return false }
+	if d.rd.active && d.rd.action_left <= 0 { return false }
+	ok, shot := attackable(d, i)
+	if !ok { return false }
+	start_round(d)
+	if d.result != .Running { end_round(d); return true }
+	if d.mobs[i].c.alive { pc_attack_mob(d, i, shot) }
+	spend(d, false)
+	return true
+}
+
+pc_do_pickup :: proc(d: ^Delve) -> bool {
+	if d.result != .Running || (d.rd.active && d.rd.action_left <= 0) { return false }
+	has := false
+	for i in 0 ..< d.loot_count { if !d.loot[i].taken && d.loot[i].pos == d.pos && R.can_carry(d.pc, d.loot[i].item) { has = true } }
+	if !has { return false }
+	start_round(d)
+	if d.result != .Running { end_round(d); return true }
+	pick_up(d)
+	spend(d, false)
+	return true
+}
+
+pc_do_drop :: proc(d: ^Delve, idx: int) -> bool {
+	if d.result != .Running || idx < 0 || idx >= d.pc.inv_count || (d.rd.active && d.rd.action_left <= 0) { return false }
+	start_round(d)
+	if d.result != .Running { end_round(d); return true }
+	drop_item(d, idx)
+	spend(d, false)
+	return true
+}
+
+// Wait: spends whatever is left of the round. Out of a fight it still takes a moment (a tile's worth
+// of the Turn clock), so waiting for torchlight or a wanderer is not free.
+pc_wait :: proc(d: ^Delve) {
+	if d.result != .Running { return }
+	start_round(d)
+	free_time := !d.rd.had_hunters
+	d.rd.move_left, d.rd.action_left = 0, 0
+	end_round(d)
+	if free_time && d.result == .Running {
+		d.tiles_moved += 1
+		for d.tiles_moved >= (d.turns + 1) * TILES_PER_TURN && d.result == .Running { new_turn(d) }
+	}
 }

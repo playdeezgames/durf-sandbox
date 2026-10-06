@@ -120,14 +120,14 @@ reaction_for_total :: proc(total: int) -> Reaction {
 
 // The d40 belongings table, entries 10 to 49 (a d4 for the tens, a d10 for the ones).
 BELONGINGS := [40]string{
-	"Light armor", "A pipe and high-quality smokeleaf", "Bow + Ammo", "Scroll with a spell of your choice",
-	"You know a spell", "Blowpipe", "Hat of the Eye, grants night vision", "Dream flute",
-	"Warhammer", "Medium armor", "Wooden staff", "Sack of dried chicken feet",
+	"Light armor", "Pipe and smokeleaf", "Bow + Ammo", "Scroll of a spell",
+	"You know a spell", "Blowpipe", "Hat of the Eye", "Dream flute",
+	"Warhammer", "Medium armor", "Wooden staff", "Dried chicken feet",
 	"Sword", "Dog", "Make-up set", "Bag of human teeth",
 	"Pistol + Ammo", "Vial of poison", "Glass eye", "Miniature goose",
-	"Silver axe", "Bottle filled with living bees", "Dramatic cape", "Lyre",
+	"Silver axe", "Bottle of bees", "Dramatic cape", "Lyre",
 	"Pot of fluorescent paint", "Bomb", "Spiked shield", "Spyglass",
-	"Crossbow + Ammo", "Heavy armor", "Tonic of Health", "Tourist guide to the Outer Planes",
-	"Piece of a treasure map", "Diary of an unsuccessful cult leader", "Halberd", "Flail",
-	"Serpent Scale Cloak", "Piece of soap that grows back", "Bottle of perfume", "Two rings that share sight",
+	"Crossbow + Ammo", "Heavy armor", "Tonic of Health", "Outer Planes guide",
+	"Piece of a treasure map", "Cult leader's diary", "Halberd", "Flail",
+	"Serpent Scale Cloak", "Self-growing soap", "Bottle of perfume", "Rings that share sight",
 }

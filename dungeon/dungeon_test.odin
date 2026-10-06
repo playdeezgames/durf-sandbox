@@ -1,3 +1,4 @@
+#+build !js
 package dungeon
 
 import "core:testing"
@@ -395,4 +396,127 @@ pick_up_prefers_lost_items_over_dropped_ones :: proc(t: ^testing.T) {
 	testing.expect(t, pick_up(&d), "something is picked up")
 	testing.expect(t, d.loot[1].taken && !d.loot[0].taken, "the lost item comes first")
 	testing.expect_value(t, lost_count(&d), 1)
+}
+
+// ---------- the phased (human) round ----------
+
+DIRS := [4]Pos{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+
+@(test)
+walking_costs_a_tile_a_press_out_of_a_fight :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 30)
+	for _ in 0 ..< 10 { testing.expect(t, pc_move(&d, {-1, 0}), "a step west") }
+	testing.expect_value(t, d.pos.x, 20)
+	testing.expect_value(t, d.turns, 1) // ten tiles is one Turn
+	testing.expect(t, !d.rd.active, "out of a fight every step is its own round")
+}
+
+@(test)
+bumping_a_wall_spends_nothing :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 10)
+	testing.expect(t, !pc_move(&d, {0, 1}), "a wall is not a move")
+	testing.expect(t, !d.rd.active && d.turns == 0 && d.tiles_moved == 0, "and costs no time")
+}
+
+@(test)
+a_fight_round_is_a_move_and_an_action_in_either_order :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 20)
+	add_mob(&d, .Dog, 25, .Hunting) // 5 tiles away: within combat range
+	testing.expect(t, pc_move(&d, {-1, 0}), "first input: the move")
+	testing.expect(t, d.rd.active, "the round is open")
+	testing.expect_value(t, d.rd.move_left, 0)
+	testing.expect_value(t, d.rd.action_left, 1)
+	testing.expect(t, pc_move(&d, {-1, 0}), "second input: the action as a second move")
+	testing.expect(t, !d.rd.active, "the round ended when both were spent")
+	testing.expect_value(t, d.pos.x, 18)
+}
+
+@(test)
+equal_speed_flight_works_press_by_press :: proc(t: ^testing.T) {
+	// the same property as the bot's retreat, with a person's inputs: from 3 tiles away, no bites
+	for seed in 1 ..= 100 {
+		d: Delve
+		corridor(&d, hardy(), 20)
+		R.rng_seed(&d.rng, u64(seed))
+		add_mob(&d, .Dog, 23, .Hunting)
+		for d.pos != d.stairs && d.result == .Running { pc_move(&d, {-1, 0}) }
+		testing.expect_value(t, d.pc.wounds, 0)
+		testing.expect_value(t, d.pc.armor, 0)
+	}
+}
+
+@(test)
+walking_into_a_hunter_attacks_it :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 20)
+	add_mob(&d, .Goose, 21, .Hunting)
+	d.event_count = 0
+	testing.expect(t, pc_move(&d, {1, 0}), "bump")
+	found := false
+	for i in 0 ..< d.event_count { if d.events[i].kind == .Attack && d.events[i].by_pc { found = true } }
+	testing.expect(t, found, "an attack event by the PC was recorded")
+	testing.expect_value(t, d.pos.x, 20) // it did not move
+}
+
+@(test)
+only_one_action_per_round :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 20)
+	add_mob(&d, .Goose, 21, .Hunting)
+	d.mobs[0].c.hd = 12 // survives
+	d.mobs[0].c.armor, d.mobs[0].c.armor_max = 99, 99
+	testing.expect(t, pc_attack(&d, 0), "the action")
+	if d.rd.active { testing.expect(t, !pc_attack(&d, 0), "no second action in the same round") }
+}
+
+@(test)
+waiting_ends_the_round_and_takes_time_out_of_a_fight :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 20)
+	for _ in 0 ..< 10 { pc_wait(&d) }
+	testing.expect_value(t, d.turns, 1) // ten waits is one Turn, so waiting is not free
+}
+
+@(test)
+events_record_reactions_pickups_drops_and_the_light_going_out :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 20)
+	add_mob(&d, .Goose, 24, .Idle)
+	d.groups[0].reacted = false
+	d.event_count = 0
+	notice(&d)
+	testing.expect(t, d.event_count == 1 && d.events[0].kind == .Reaction && d.events[0].name == "Miniature goose", "a Reaction event")
+	d.event_count = 0
+	d.loot[0] = Loot{pos = d.pos, item = {name = "Teapot", kind = .Lost, slots = 1, gp = 60}}
+	d.loot_count = 1
+	testing.expect(t, pc_do_pickup(&d), "picked up")
+	testing.expect(t, d.events[d.event_count - 1].kind == .Pickup && d.events[d.event_count - 1].n == 60, "a Pickup event with its value")
+	testing.expect(t, pc_do_drop(&d, d.pc.inv_count - 1), "dropped")
+	testing.expect(t, d.events[d.event_count - 1].kind == .Drop, "a Drop event")
+	d.light = 1
+	d.event_count = 0
+	new_turn(&d)
+	testing.expect(t, d.light == 0 && d.events[d.event_count - 1].kind == .Light_Out, "Light_Out when the torch ends")
+}
+
+@(test)
+sight_is_the_torch_radius_with_line_of_sight_and_is_remembered :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 20)
+	update_fov(&d)
+	testing.expect(t, d.visible[5][20] && d.visible[5][20 + SIGHT], "own tile and the edge of the light")
+	testing.expect(t, !d.visible[5][20 + SIGHT + 1], "beyond the light is dark")
+	testing.expect(t, d.visible[4][20], "a wall beside the PC is seen")
+	d.tiles[5][23] = .Wall
+	update_fov(&d)
+	testing.expect(t, !d.visible[5][25], "a wall blocks the view")
+	for _ in 0 ..< 3 { pc_move(&d, {-1, 0}) }
+	testing.expect(t, d.explored[5][22], "what was seen is remembered")
+	testing.expect(t, !d.visible[5][26], "but it is no longer visible")
+	d.light = 0
+	update_fov(&d)
+	testing.expect(t, d.visible[5][d.pos.x - 1] && !d.visible[5][d.pos.x - 2], "no light: one tile of sight")
 }

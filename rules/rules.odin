@@ -260,6 +260,7 @@ Damage_Result :: struct {
 	dmg_in:      int, // after shield
 	absorbed:    int, // by Armor
 	wounds_new:  int,
+	wounds_total: int, // all the Wounds the creature has after this hit
 	hd_rolled:   bool,
 	hd_sum:      int,
 	died:        bool,
@@ -279,6 +280,7 @@ apply_damage :: proc(r: ^Rng, c: ^Creature, dmg: int, direct := false) -> (out: 
 	if n > 0 {
 		c.wounds += n
 		out.wounds_new = n
+		out.wounds_total = c.wounds
 		out.hd_rolled = true
 		if c.hd == 0 {
 			out.died = true
