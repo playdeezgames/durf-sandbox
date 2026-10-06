@@ -182,9 +182,19 @@ log_lines_fit_the_screen :: proc(t: ^testing.T) {
 		describe_event(g, D.Event{kind = .Mob_Died, name = R.MONSTERS[m].name, n = 125})
 		describe_event(g, D.Event{kind = .Mob_Fled, name = R.MONSTERS[m].name})
 		describe_event(g, D.Event{kind = .Stunned, name = R.MONSTERS[m].name, n = 4})
+		for tk in R.Trap_Kind { describe_event(g, D.Event{kind = .Trap_Sprung, name = R.MONSTERS[m].name, trap = tk}) }
 		check(t, g, n0, &longest)
 	}
 	n0 := g.log_count
+	for tk in R.Trap_Kind {
+		describe_event(g, D.Event{kind = .Trap_Sprung, trap = tk, n = 4})
+		describe_event(g, D.Event{kind = .Trap_Found, trap = tk})
+		describe_event(g, D.Event{kind = .Trap_Disarmed, trap = tk, roll = R.Roll{total = 27}})
+	}
+	describe_event(g, D.Event{kind = .Search_Nothing})
+	describe_event(g, D.Event{kind = .Disarm_Failed, roll = R.Roll{total = 27}})
+	check(t, g, n0, &longest)
+	n0 = g.log_count
 	for name in D.LOST_ITEMS { describe_event(g, D.Event{kind = .Pickup, name = name, n = 399}); describe_event(g, D.Event{kind = .Drop, name = name}) }
 	check(t, g, n0, &longest)
 }
@@ -250,4 +260,68 @@ z_attacks_a_neutral_monster_and_provokes_it :: proc(t: ^testing.T) {
 	d.mob_count = 0
 	press(g, .Attack)
 	testing.expect_value(t, log_line(g, 0), "Nothing in reach to attack.")
+}
+
+// A trap on the first walkable neighbour of the PC, hidden or found; returns its direction.
+trap_beside :: proc(g: ^Game, kind: R.Trap_Kind, revealed: bool) -> D.Pos {
+	d := &g.delve
+	d.trap_count = 0
+	for dir in ([?]D.Pos{{1, 0}, {0, 1}, {-1, 0}, {0, -1}}) {
+		if D.walkable(d, d.pos + dir) && d.pos + dir != d.stairs {
+			d.traps[0] = D.Trap{pos = d.pos + dir, kind = kind, armed = true, revealed = revealed, clues = {d.pos, {}}, clue_count = 1}
+			d.trap_count = 1
+			return dir
+		}
+	}
+	return {}
+}
+
+@(test)
+search_and_disarm_keys_work :: proc(t: ^testing.T) {
+	g := fresh(20)
+	press(g, .Confirm, .N1)
+	g.delve.mob_count = 0 // nothing may wander in and take the round
+	trap_beside(g, .Mess, false)
+	press(g, .Search)
+	testing.expect(t, g.delve.traps[0].revealed, "E finds the trap next to you")
+	testing.expect(t, log_line(g, 0)[:6] == "Found:", "and says so")
+	press(g, .Disarm)
+	testing.expect(t, !g.delve.traps[0].armed, "C disarms or springs it, but it is spent either way")
+}
+
+@(test)
+a_found_trap_is_not_stepped_on :: proc(t: ^testing.T) {
+	g := fresh(21)
+	press(g, .Confirm, .N1)
+	dir := trap_beside(g, .Darts, true)
+	pos := g.delve.pos
+	press(g, dir == D.Pos{1, 0} ? .Right : (dir == D.Pos{0, 1} ? .Up : (dir == D.Pos{-1, 0} ? .Left : .Down)))
+	testing.expect(t, g.delve.pos == pos && g.delve.pc.wounds == 0, "the PC stays put")
+	testing.expect(t, strings_contains(log_line(g, 0), "ahead"), "and is told why")
+}
+
+@(test)
+disarm_with_nothing_found_says_so :: proc(t: ^testing.T) {
+	g := fresh(22)
+	press(g, .Confirm, .N1)
+	g.delve.trap_count = 0
+	press(g, .Disarm)
+	testing.expect(t, strings_contains(log_line(g, 0), "No found trap"), "a message, no round spent")
+}
+
+@(test)
+dying_to_a_trap_names_the_trap :: proc(t: ^testing.T) {
+	g := fresh(23)
+	press(g, .Confirm, .N1)
+	g.delve.pc.hd = 1
+	g.delve.pc.wounds = 20
+	dir := trap_beside(g, .Darts, false)
+	D.pc_move(&g.delve, dir)
+	after_action(g)
+	testing.expect(t, g.screen == .Dead && g.killer == "Dart trap", "the death screen names the trap")
+}
+
+strings_contains :: proc(s, sub: string) -> bool {
+	for i in 0 ..= len(s) - len(sub) { if s[i:i + len(sub)] == sub { return true } }
+	return false
 }

@@ -17,14 +17,19 @@ Bot :: struct {
 	push_def:         int,
 	loot_goal:        int, // go home after carrying this many items
 	drop_junk:        bool, // drop junk belongings to fit a lost item (decision F)
+	traps:            Trap_Policy,
 }
 
+// Ignore: walks on (a trap it has never found goes off). Careful: searches when it sees a clue and disarms what it finds.
+Trap_Policy :: enum { Ignore, Careful }
+
 BOTS := [?]Bot{
-	{"Brave (fights everything)", 999, 99, true, false, 0, 0, 99, true},
-	{"Careful (flees big threats)", 7, 2, false, false, 0, 0, 99, true},
-	{"Careful, never drops", 7, 2, false, false, 0, 0, 99, false},
-	{"Careful + pushes", 7, 2, false, false, 1, 1, 99, true},
-	{"Coward (flees any hunter)", 0, 1, false, false, 0, 0, 99, true},
+	{"Brave (fights everything)", 999, 99, true, false, 0, 0, 99, true, .Ignore},
+	{"Careful (flees big threats)", 7, 2, false, false, 0, 0, 99, true, .Ignore},
+	{"Careful, never drops", 7, 2, false, false, 0, 0, 99, false, .Ignore},
+	{"Careful + pushes", 7, 2, false, false, 1, 1, 99, true, .Ignore},
+	{"Coward (flees any hunter)", 0, 1, false, false, 0, 0, 99, true, .Ignore},
+	{"Careful + searches for traps", 7, 2, false, false, 0, 0, 99, true, .Careful},
 }
 
 Ending :: enum { Died, Home_done, Home_light, Home_hurt, Home_fled, Home_stuck, Timeout }
@@ -40,11 +45,30 @@ Delve_Result :: struct {
 	rooms_visited: int,
 	loot_seen: int,
 	slots_free_end: int,
+	by_trap: bool,
+	trap: R.Trap_Kind,
+	traps_sprung, traps_disarmed, searches: int,
 }
 
 debug_timeouts := false
 trace_on := false // print one line per bot decision (use: sim trace)
 replaying := false
+
+// A clue mark of a still-hidden trap in view and close by (what a player would see and search for).
+clue_in_view :: proc(d: ^D.Delve) -> bool {
+	for dy in -D.CLUE_SIGHT ..= D.CLUE_SIGHT {
+		for dx in -D.CLUE_SIGHT ..= D.CLUE_SIGHT {
+			p := d.pos + D.Pos{dx, dy}
+			if !D.clue_visible(d, p) { continue }
+			if _, ok := D.clue_at(d, p); !ok { continue }
+			for i in 0 ..< d.trap_count { // only clues of traps not yet found
+				t := d.traps[i]
+				if t.armed && !t.revealed { for k in 0 ..< t.clue_count { if t.clues[k] == p { return true } } }
+			}
+		}
+	}
+	return false
+}
 
 junk_index :: proc(d: ^D.Delve) -> int {
 	for i in 0 ..< d.pc.inv_count { if d.pc.inv[i].kind == .Junk { return i } }
@@ -125,6 +149,7 @@ play_delve :: proc(r: ^R.Rng, seed: u64, depth: int, kit: Kit, bot: Bot) -> (res
 	heading_home := false
 	stuck := 0
 	last_pos := d.pos
+	last_search := D.Pos{-99, -99}
 	loop: for iter in 0 ..< 700 {
 		if d.result != .Running { break }
 		if trace_on && (iter < 60 || iter > 640) {
@@ -163,6 +188,17 @@ play_delve :: proc(r: ^R.Rng, seed: u64, depth: int, kit: Kit, bot: Bot) -> (res
 			heading_home = true
 			going_home = why
 			continue
+		}
+
+		// 2b. traps: disarm one found next to us; search when a clue is in view
+		if bot.traps == .Careful {
+			if D.adjacent_known_trap(&d) >= 0 { D.round_disarm(&d); stuck = 0; continue }
+			if D.manhattan(d.pos, last_search) >= 3 && clue_in_view(&d) {
+				last_search = d.pos
+				D.round_search(&d)
+				stuck = 0
+				continue
+			}
 		}
 
 		// 3. attack things that ignore us, if the policy says so
@@ -246,6 +282,7 @@ play_delve :: proc(r: ^R.Rng, seed: u64, depth: int, kit: Kit, bot: Bot) -> (res
 	for i in 0 ..< d.room_count { if d.visited[i] { res.rooms_visited += 1 } }
 	for i in 0 ..< d.loot_count { if d.loot[i].seen && !d.loot[i].dropped { res.loot_seen += 1 } }
 	res.slots_free_end = R.slots_free(d.pc)
+	res.traps_sprung, res.traps_disarmed, res.searches = d.traps_sprung, d.traps_disarmed, d.searches
 	res.rounds = d.rounds
 	res.turns = d.turns
 	res.items = D.lost_count(&d)
@@ -253,6 +290,8 @@ play_delve :: proc(r: ^R.Rng, seed: u64, depth: int, kit: Kit, bot: Bot) -> (res
 	case .Died:
 		res.ending = .Died
 		res.killer = d.killer
+		res.by_trap = d.trap_death
+		res.trap = d.killer_trap
 	case .Exited:
 		res.ending = going_home
 		res.gold = D.lost_gp(&d)
@@ -313,15 +352,40 @@ delve_report :: proc(r: ^R.Rng, runs: int) {
 		kit := KITS[2]
 		killers: [R.Monster]int
 		endings: [Ending]int
+		trap_deaths := 0
 		for n in 0 ..< runs {
 			res := play_delve(r, u64(depth * 1_000_003 + n + 1), depth, kit, bot)
 			endings[res.ending] += 1
-			if res.ending == .Died { killers[res.killer] += 1 }
+			if res.ending == .Died && !res.by_trap { killers[res.killer] += 1 }
+			if res.ending == .Died && res.by_trap { trap_deaths += 1 }
 		}
 		fmt.printf("Depth %d, %s, %s: endings", depth, bot.name, kit.name)
 		for e in Ending { if endings[e] > 0 { fmt.printf(" %v=%d", e, endings[e]) } }
 		fmt.printf("; killers")
 		for m in R.Monster { if killers[m] > 0 { fmt.printf(" %s=%d", R.MONSTERS[m].name, killers[m]) } }
+		if trap_deaths > 0 { fmt.printf(" traps=%d", trap_deaths) }
 		fmt.println()
+	}
+	trap_report(r, runs)
+}
+
+// Traps: for each bot, the cost of ignoring them against searching for them (Sword+Light kit).
+trap_report :: proc(r: ^R.Rng, runs: int) {
+	fmt.println("\nTraps (Sword+Light kit): sprung on the PC, disarmed, searches, deaths by trap, survival, Turns used, gold")
+	for depth in 1 ..= 3 {
+		for bi in 1 ..= 5 {
+			if bi != 1 && bi != 5 { continue }
+			bot := BOTS[bi]
+			sprung, disarmed, searches, trap_deaths, survived, turns, gold := 0, 0, 0, 0, 0, 0, 0
+			for n in 0 ..< runs {
+				res := play_delve(r, u64(depth * 1_000_003 + n + 1), depth, KITS[2], bot)
+				sprung += res.traps_sprung; disarmed += res.traps_disarmed; searches += res.searches
+				if res.ending == .Died && res.by_trap { trap_deaths += 1 }
+				if res.ending != .Died { survived += 1 }
+				turns += res.turns; gold += res.gold
+			}
+			f := f64(runs)
+			fmt.printf("Depth %d, %-30s sprung %.2f, disarmed %.2f, searches %.2f, trap deaths %.1f%%, survived %.0f%%, Turns %.1f, gold %.0f\n", depth, bot.name, f64(sprung) / f, f64(disarmed) / f, f64(searches) / f, 100 * f64(trap_deaths) / f, 100 * f64(survived) / f, f64(turns) / f, f64(gold) / f)
+		}
 	}
 }

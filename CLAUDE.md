@@ -9,7 +9,7 @@ A **practice project** for [DURF Jam 6](https://itch.io/jam/durf-jam-6) (Oct 14 
 - **Rules target for the practice: DURF core rules.** For the jam we may reconsider (for example DURF Expanded). The 2.2 PDF is in `durf-reference/`; the current release is v2.4 (decision 8 in `DESIGN.md`: built on 2.2 with every number in `rules/data.odin`; **2.4 no longer matters for this prototype**, the jam may reconsider).
 - **Work tracking:** one TODO file per spike in `todo/`, with `- [ ]` checkboxes (see `todo/README.md`). Tick boxes as work is done and verified, add boxes as you discover work, and keep `todo/README.md`'s state column current.
 - Status and plan: **`DESIGN.md`** (source of truth: rules digest, design, architecture, milestones, open questions). Running log of lessons: **`LEARNINGS.md`**.
-- Phase: design decisions are made (see the decision log in `DESIGN.md`); spikes A, A2 and A3 are done; A3 (apply decisions, rerun the sims) is done and Spike B (a playable browser build) is built; next is the product owner's playtest and what it turns up. The user still wants design and plan first for new areas; spikes are fine.
+- Phase: design decisions are made (see the decision log in `DESIGN.md`); spikes A, A2, A3, B (a playable browser build, playtested Oct 6: "works for a little demo") and C (traps, built Oct 6, awaiting playtest) are done; the product owner's notes for the real jam game (menu-driven inventory, minimal keypresses) are in `DESIGN.md` and `LEARNINGS.md`. The user still wants design and plan first for new areas; spikes are fine.
 - **Key findings to remember:** dropping junk dissolves the bag limit and the torch becomes the binding limit; ranged monsters make depth matter; the book's Ammo rule barely limits a kiting bow. And, from A1: under the book's rules combat is lethal and never pays; avoidance (running at equal speed, Reaction, light, the bag) is the game.
 
 ## If you are the jam project's session
@@ -29,7 +29,7 @@ A **practice project** for [DURF Jam 6](https://itch.io/jam/durf-jam-6) (Oct 14 
 | Tileset contact-sheet tool | `tools/sheet.py` | works; usage in `LEARNINGS.md` |
 | Urizen tileset | `assets/tileset.png` | copy of the vault's sheet (CC0, credit vurmux) |
 | DURF v2.2 rules engine: seeded RNG, Buffs/Breaks, opposed combat, inventory of items with slots, equipment derived from the bag, Stress, Ammo, damage, HD death, morale, reaction, XP, character creation | `rules/` (package `rules`; numbers in `rules/data.odin`) | **built**, 25 passing native tests (mutation-checked) |
-| Dungeon/delve engine: seeded floor generation, line of sight, Reaction on sight, chase and flee (a move plus an action per round), Turn clock and torch, wandering encounters, explicit pick up and drop against the slot limit, Ammo check after fights, gecko paralysis as lost Turns, bump-swap with neutrals | `dungeon/` (package `dungeon`, imports `../rules`) | **built**, 23 passing native tests |
+| Dungeon/delve engine: seeded floor generation, line of sight, Reaction on sight, chase and flee (a move plus an action per round), Turn clock and torch, wandering encounters, explicit pick up and drop against the slot limit, Ammo check after fights, gecko paralysis as lost Turns, bump-swap with neutrals | `dungeon/` (package `dungeon`, imports `../rules`) | **built**, 47 passing native tests (including traps) |
 | Playable browser build: game layer (screens, keys, banking, shop, log text), canvas shim, drawing, QA URL hooks | `src/game.odin` (pure, 11 native tests), `src/web.odin` (`#+build js`), `web/index.html`, `build.sh` | **built** (Spike B), awaiting a human playtest |
 | Labelled contact sheet of the sprites in use | `tools/sprites.py` | works |
 | Simulator bots: abstract fights (`fights`) and whole delves on the grid with four policies (`delves`) | `sim/`, results in `sim/results-fights-v2.2.txt` and `sim/results-delves-v2.2.txt` | **built**; no spells, no hirelings, bot knows the room layout; `sim trace` and `sim delves debug` (replays timeouts with a trace) help find stuck bots |
@@ -54,7 +54,7 @@ google-chrome --headless=new --no-sandbox --disable-gpu --hide-scrollbars --wind
 python3 tools/sprites.py out.png                                                      # sprite contact sheet
 ```
 
-QA URL hooks: `?seed=N&depth=D` starts a seeded delve, `&hunter=<Monster index>&hdist=<tiles>` adds a hunting monster. In the browser pane, `window.dispatchEvent(new KeyboardEvent("keydown", {key: "ArrowRight"}))` drives the game (it listens on `window`); screenshots can lag one step.
+QA URL hooks: `?seed=N&depth=D` starts a seeded delve, `&hunter=<Monster index>&hdist=<tiles>` adds a hunting monster, `&trap=<0 Darts,1 Snare,2 Alarm,3 Mess>&tdist=<tiles>` adds a hidden trap with clues on the way. In the browser pane, `window.dispatchEvent(new KeyboardEvent("keydown", {key: "ArrowRight"}))` drives the game (it listens on `window`); screenshots can lag one step.
 
 ## Conventions (same as the earlier SPLORR!! entries)
 

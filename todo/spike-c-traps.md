@@ -1,6 +1,6 @@
 # Spike C: traps
 
-Goal: add traps to the delve, with a way to detect and disable them. Planned; added Oct 5, 2026 at the product owner's request ("we will have to figure out how to detect/disable them later"). Not started, and the design questions below need decisions first.
+Goal: add traps to the delve, with a way to detect and disable them. Added Oct 5, 2026 at the product owner's request. Design decided Oct 6; **built Oct 6** (engine, simulator, game), awaiting the product owner's playtest.
 
 ## What the DURF 2.2 book gives us (it has no trap rules)
 - A **Turn** (10 minutes) is the time "to search a dungeon room, pick a lock or do any other significant activity". So searching or disarming should cost a Turn, which burns torch and rolls the wanderer d6.
@@ -10,30 +10,36 @@ Goal: add traps to the delve, with a way to detect and disable them. Planned; ad
 - So traps, their damage, and detection are **our own design**, built from those parts. Credit and flag them as house content, as with the Blowpipe Imp and the Crossbow Cultist.
 
 ## Design decisions needed (ask the product owner one at a time)
-- [ ] What traps do: damage (Armor or direct Wounds?), Stress, lost Turns, an alarm that wakes a room, a pit that drops you a level, a snare that holds you. Keep a short list to start (two or three).
-- [ ] How you detect them: automatically on a roll when you step near, by an explicit search action that costs a Turn, by a tool (a 10' pole is a listed Supply item, "bag of caltrops", chalk), or by a monster or hireling.
-- [ ] How you disarm or avoid them: a DEX or WIL action roll (with Push), spending a Supply, walking around, jumping, leaving them armed.
-- [ ] Whether a hidden trap is always fair: a warning clue (bones, scorch marks, a different floor tile), a save to avoid, or purely luck. Permadeath means a trap that kills without a roll feels unfair; the book's "risky" tone argues for a save.
-- [ ] How traps fit decision D (combat is a failure state; avoidance is the game): traps are another thing to avoid, so they should reward care (searching costs torch) and never be mandatory.
-- [ ] Whether monsters trigger traps or avoid them (a trap as a way to hurt a chaser would be a new tool for the player).
+- [x] What traps do (decided Oct 6): **all four** effects, one trap kind each: a **dart/pit** (1 direct Wound; no save, see Fairness), a **snare** (1d4 lost Turns), an **alarm** (the nearest monster group hunts you whatever its Reaction), and a **mess** (Stress that takes bag slots until rest). Numbers go in `rules/data.odin` as house content.
+- [x] How you detect them (decided Oct 6): **search action plus visible clues**. A hidden trap leaves a clue on a nearby tile (bones, scorch marks, an odd floor tile); the search key (costs a Turn, so torch and wanderer die) rolls to reveal traps nearby. Still to settle: the roll, the search radius, and how clues are drawn.
+- [x] How you disarm or avoid them (decided Oct 6): a revealed trap stays on the map; **walk around it, or spend the action to disarm with a DEX roll** (d20 + DEX over 15, Push allowed); a failed disarm triggers it. Disarmed traps stay safe. Placement must therefore keep a route around, or accept a roll.
+- [x] Fairness (decided Oct 6): **no save; clues are the defence.** Stepping on an unrevealed trap always triggers it, so the dart/pit no longer has a DEX save (it is 1 direct Wound, automatic). Consequence to design for: a clue must sit near every trap, readable and consistent, and a trap's damage must be low enough that permadeath doesn't feel cheap (check in the simulator).
+- [x] Fit with decision D (resolved by the above): traps are another thing to avoid; searching costs torch, a route around must exist, they are never mandatory.
+- [x] Monsters (decided Oct 6): **hunting monsters trigger traps** they step on. Wound trap: 1 direct Wound to the monster; snare: it loses 1d4 Turns of action (like the gecko stun, here as rounds); alarm: wakes the nearest other group; mess: no effect on monsters. A known trap is a tool for leading a chaser over it. Wanderers and neutrals do not trigger.
 
 ## Engine (`dungeon/`), after the decisions
-- [ ] A `Trap` record on the floor: position, kind, hidden or revealed, armed or disarmed
-- [ ] Placement in generation: by depth, never in the start room, never blocking the only route home, always avoidable by some route or roll
-- [ ] Triggering when the PC steps on one: the save or roll, then the effect, as events for the log
-- [ ] Detection and disarming actions, costing the round's action and, if searching, a Turn
-- [ ] Events: trap found, triggered, disarmed, saved
-- [ ] Tests: connectivity with traps placed, determinism by seed, save odds, a Turn cost for searching, no trap in the start room
+- [x] A `Trap` record on the floor: position, kind, hidden or revealed, armed or disarmed
+- [x] Placement in generation: by depth, never in the start room, never blocking the only route home, always avoidable by some route or roll
+- [x] Triggering when the PC steps on one: the save or roll, then the effect, as events for the log
+- [x] Detection and disarming actions, costing the round's action and, if searching, a Turn
+- [x] Events: trap found, triggered, disarmed, saved
+- [x] Tests: connectivity with traps placed, determinism by seed, save odds, a Turn cost for searching, no trap in the start room
 
 ## Simulator (`sim/`)
-- [ ] Bot detects and avoids traps by policy; measure deaths and time cost against torch pressure
-- [ ] Rerun the delve report; check that survival and income stay in the range decided in A3 and L
+- [x] Bot detects and avoids traps by policy; measure deaths and time cost against torch pressure
+- [x] Rerun the delve report; check that survival and income stay in the range decided in A3 and L
 
 ## Game and rendering (`src/`)
-- [ ] A key to search or disarm, shown in the intro and the HUD hints (generate hints from the key map)
-- [ ] Draw hidden traps as nothing, revealed ones with a sprite and a glow, disarmed ones dimmed
-- [ ] Log lines for every roll, within 33 characters
-- [ ] Death screen names the trap
+- [x] A key to search or disarm, shown in the intro and the HUD hints (generate hints from the key map)
+- [x] Draw hidden traps as nothing, revealed ones with a sprite and a glow, disarmed ones dimmed
+- [x] Log lines for every roll, within 33 characters
+- [x] Death screen names the trap
 
 ## Wrap-up
-- [ ] Tests pass; update `DESIGN.md` (decision log and findings), `LEARNINGS.md`, `CLAUDE.md`
+- [x] Tests pass (rules 25, dungeon 47, src 16); `DESIGN.md`, `LEARNINGS.md` and `CLAUDE.md` updated
+- [x] First playtest (Oct 6): clue far too obvious (fixed), trap worked (got gooed)
+- [ ] Second look: is the faint clue now too easy to miss, is searching worth a Turn, is a failed disarm fair
+- [ ] A search roll was NOT added (decided by the builder, flagged): a search always reveals traps within 4 tiles. Ask whether it should roll (WIL or DEX over 15) instead
+- [x] Clue made subtle after the playtest (Oct 6): faint stain, only within 3 tiles and in torchlight
+- [ ] Trap sprites are stand-ins (a spatter for the clue, an iron grate for a found trap); one clue sprite for all four kinds
+- [ ] Clues only warn within 2 tiles of a trap; consider giving each kind its own clue (the table in `rules/data.odin` already names them)

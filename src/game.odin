@@ -17,7 +17,7 @@ Screen :: enum { Intro, Office, Shop, Delve, Result, Dead }
 
 Key :: enum {
 	None, Up, Down, Left, Right,
-	Wait, Pickup, Confirm, Cancel, Push, Drop, Fire, Reroll, Shop, Travel, Attack,
+	Wait, Pickup, Confirm, Cancel, Push, Drop, Fire, Reroll, Shop, Travel, Attack, Search, Disarm,
 	N0, N1, N2, N3, N4, N5, N6, N7, N8, N9,
 }
 
@@ -221,6 +221,20 @@ describe_attack :: proc(g: ^Game, e: D.Event) {
 	if x.dodged { log_addf(g, "%s dodges.", b) }
 }
 
+// A trap goes off: on you (no name) or on a monster that stepped on it.
+describe_trap :: proc(g: ^Game, e: D.Event) {
+	if e.name != "" {
+		log_addf(g, "%s trips: %s", e.name, R.TRAPS[e.trap].name)
+		return
+	}
+	switch e.trap {
+	case .Darts: log_addf(g, "Darts! Wounds +%d (direct)", e.n)
+	case .Snare: log_addf(g, "Snared! %d Turns lost", e.n)
+	case .Alarm: log_add(g, "An alarm rings!")
+	case .Mess:  log_addf(g, "Goo! Stress +%d", e.n)
+	}
+}
+
 describe_event :: proc(g: ^Game, e: D.Event) {
 	switch e.kind {
 	case .Attack:    describe_attack(g, e)
@@ -234,6 +248,11 @@ describe_event :: proc(g: ^Game, e: D.Event) {
 	case .Stunned:   log_addf(g, "%s stuns you: %d Turns lost", e.name, e.n)
 	case .Ammo_Low:  log_add(g, "Your Ammo is running low.")
 	case .Ammo_Gone: log_add(g, "Out of Ammo!")
+	case .Trap_Found:     log_addf(g, "Found: %s", R.TRAPS[e.trap].name)
+	case .Search_Nothing: log_add(g, "You search: nothing found.")
+	case .Trap_Disarmed:  log_addf(g, "Disarmed: %s (%d)", R.TRAPS[e.trap].name, e.roll.total)
+	case .Disarm_Failed:  log_addf(g, "Disarm fails (%d)!", e.roll.total)
+	case .Trap_Sprung:    describe_trap(g, e)
 	}
 }
 
@@ -310,7 +329,7 @@ after_action :: proc(g: ^Game) {
 	switch d.result {
 	case .Running:
 	case .Died:
-		g.killer = R.MONSTERS[d.killer].name
+		g.killer = R.TRAPS[d.killer_trap].name if d.trap_death else R.MONSTERS[d.killer].name
 		save_best_if_better(g)
 		g.screen = .Dead
 	case .Exited:
@@ -328,6 +347,7 @@ travel_to_stairs :: proc(g: ^Game) {
 		grid: D.Grid
 		blocked: D.Blocked
 		for i in 0 ..< d.mob_count { if D.blocks_pc(d.mobs[i]) { blocked[d.mobs[i].pos.y][d.mobs[i].pos.x] = true } }
+		for i in 0 ..< d.trap_count { if d.traps[i].armed && d.traps[i].revealed { blocked[d.traps[i].pos.y][d.traps[i].pos.x] = true } }
 		blocked[d.stairs.y][d.stairs.x] = false
 		D.bfs(d, d.stairs, &grid, &blocked)
 		best := grid[d.pos.y][d.pos.x]
@@ -369,7 +389,9 @@ delve_key :: proc(g: ^Game, k: Key) {
 		return
 	}
 	if dir, ok := key_dir(k); ok {
-		D.pc_move(d, dir)
+		if !D.pc_move(d, dir) && D.known_trap_at(d, d.pos + dir) {
+			log_addf(g, "%s ahead! C disarms it.", R.TRAPS[d.traps[D.trap_index(d, d.pos + dir)].kind].name)
+		}
 		after_action(g)
 		return
 	}
@@ -382,6 +404,10 @@ delve_key :: proc(g: ^Game, k: Key) {
 			for i in 0 ..< d.loot_count { if !d.loot[i].taken && d.loot[i].pos == d.pos { here = true } }
 			log_add(g, "No room: drop something (X)." if here else "Nothing here to pick up.")
 		}
+	case .Search:
+		D.pc_search(d)
+	case .Disarm:
+		if !D.pc_disarm(d) { log_add(g, "No found trap next to you.") }
 	case .Confirm:
 		if d.pos == d.stairs { D.exit_delve(d) } else { log_add(g, "Walk to the stairs to leave.") }
 	case .Push:
@@ -426,6 +452,30 @@ debug_add_hunter :: proc(g: ^Game, kind: R.Monster, dist: int) -> bool {
 			d.groups[gi] = {size = 1, reacted = true, reaction = .Hostile}
 			d.mob_count += 1
 			d.group_count += 1
+			return true
+		}
+	}
+	return false
+}
+
+// QA: a hidden trap of this kind `dist` tiles of walking from the PC, with clues on the way to it.
+debug_add_trap :: proc(g: ^Game, kind: R.Trap_Kind, dist: int) -> bool {
+	d := &g.delve
+	if g.screen != .Delve || d.trap_count >= D.MAX_TRAPS { return false }
+	grid: D.Grid
+	D.bfs(d, d.pos, &grid)
+	for y in 0 ..< D.H {
+		for x in 0 ..< D.W {
+			p := D.Pos{x, y}
+			if grid[y][x] != dist || D.tile_occupied(d, p) || d.tiles[y][x] != .Floor { continue }
+			t := D.Trap{pos = p, kind = kind, armed = true}
+			for dir in ([?]D.Pos{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+				c := p + dir
+				if t.clue_count < 2 && D.walkable(d, c) && c != d.stairs && grid[c.y][c.x] == dist - 1 { t.clues[t.clue_count] = c; t.clue_count += 1 }
+			}
+			if t.clue_count == 0 { continue }
+			d.traps[d.trap_count] = t
+			d.trap_count += 1
 			return true
 		}
 	}

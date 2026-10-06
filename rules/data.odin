@@ -105,6 +105,25 @@ MONSTERS := [Monster]Monster_Def{
 	.Crossbow_Cultist = {"Crossbow Cultist", 3, 1, 3, 7, 4, true, {}, true}, // a crossbow: 4 dmg, no reload
 }
 
+// Traps are house content: the 2.2 book has no dungeon trap rules (decided Oct 6, DESIGN.md "Traps").
+Trap_Kind :: enum { Darts, Snare, Alarm, Mess }
+
+Trap_Def :: struct {
+	name: string,
+	clue: string, // what the player sees near it
+}
+
+TRAPS := [Trap_Kind]Trap_Def{
+	.Darts = {"Dart trap", "Pin-prick holes"},
+	.Snare = {"Snare", "Frayed rope"},
+	.Alarm = {"Alarm", "A bell-pull"},
+	.Mess  = {"Goo trap", "Sticky sheen"},
+}
+
+TRAP_DART_WOUNDS :: 1 // direct Wounds (ignoring Armor), no save
+TRAP_SNARE_DIE   :: 4 // 1d4 Turns held (monsters: rounds)
+TRAP_MESS_STRESS :: 2 // Stress that takes bag slots until rest
+
 Reaction :: enum { Hostile, Unfriendly, Indifferent, Friendly, Helpful }
 
 // 2d6 reaction bands: 2-3, 4-5, 6-8, 9-10, 11-12.

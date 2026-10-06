@@ -52,6 +52,13 @@ debug_hunter :: proc "c" (kind, dist: i32) {
 	debug_add_hunter(&game, R.Monster(clamp(int(kind), 0, len(R.Monster) - 1)), int(dist))
 }
 
+// QA: add a hidden trap (kind is the Trap_Kind enum index) this many tiles of walking away.
+@(export)
+debug_trap :: proc "c" (kind, dist: i32) {
+	context = ctx
+	debug_add_trap(&game, R.Trap_Kind(clamp(int(kind), 0, len(R.Trap_Kind) - 1)), int(dist))
+}
+
 // Read the logical key first: remote desktops can send wrong e.code values.
 map_key :: proc(k: string) -> Key {
 	switch k {
@@ -70,6 +77,8 @@ map_key :: proc(k: string) -> Key {
 	case "r", "R":               return .Reroll
 	case "b", "B":               return .Shop
 	case "t", "T":               return .Travel
+	case "e", "E":               return .Search
+	case "c", "C":               return .Disarm
 	case "0": return .N0
 	case "1": return .N1
 	case "2": return .N2
@@ -102,6 +111,8 @@ SPR_FLOOR  :: Tile{8, 5} // dark parquet
 SPR_STAIRS :: Tile{46, 3} // a ladder
 SPR_LOST   :: Tile{1, 22} // a gem stands in for a lost item
 SPR_DROPPED :: Tile{1, 23} // a pouch stands in for dropped things
+SPR_CLUE   :: Tile{3, 25} // red spatters near a trap
+SPR_TRAP   :: Tile{54, 0} // an iron grate: a found trap
 
 MOB_SPRITES := [R.Monster]Tile{
 	.Goose            = {5, 16},
@@ -245,6 +256,26 @@ draw_map :: proc(g: ^Game) {
 			}
 		}
 	}
+	for i in 0 ..< d.trap_count { // clues are drawn once seen; a found trap stands out, a spent one fades
+		t := d.traps[i]
+		if t.armed {
+			for k in 0 ..< t.clue_count {
+				c := t.clues[k]
+				sx, sy := c.x - cam_x, c.y - cam_y
+				if sx < 0 || sx >= MAP_COLS || sy < 0 || sy >= MAP_ROWS || !D.clue_visible(d, c) { continue }
+				draw_tile(SPR_CLUE, f32(sx), f32(MAP_Y0 + sy), 0.3) // a faint stain: you have to be looking
+			}
+		}
+		sx, sy := t.pos.x - cam_x, t.pos.y - cam_y
+		if !t.revealed || sx < 0 || sx >= MAP_COLS || sy < 0 || sy >= MAP_ROWS { continue }
+		x, y := f32(sx), f32(MAP_Y0 + sy)
+		if t.armed {
+			draw_rect(x, y, 1, 1, {1.0, 0.25, 0.25, 0.25})
+			draw_tile(SPR_TRAP, x, y, 1 if d.visible[t.pos.y][t.pos.x] else FOG_ALPHA * 1.5, 2)
+		} else {
+			draw_tile(SPR_TRAP, x, y, 0.3 if d.visible[t.pos.y][t.pos.x] else FOG_ALPHA, 2)
+		}
+	}
 	for i in 0 ..< d.loot_count {
 		l := d.loot[i]
 		if l.taken || !(l.seen || d.visible[l.pos.y][l.pos.x]) { continue }
@@ -309,6 +340,8 @@ draw_intro :: proc(g: ^Game) {
 		"X  drop   F  fire   P  push",
 		"Z  attack the nearest thing",
 		"T  walk to the stairs",
+		"E  search for traps (a Turn)",
+		"C  disarm a trap you found",
 		"Enter   take the stairs out",
 		"",
 		fmt.tprintf("Best: %d gp, depth %d", g.best_score, g.best_depth),

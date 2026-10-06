@@ -105,12 +105,16 @@
 		// ?hunter=1&hdist=3 adds a hunting monster (1 = Dog; see the Monster enum) a few tiles away.
 		const wantedHunter = parseInt(params.get("hunter"), 10);
 		const wantedDist = parseInt(params.get("hdist"), 10) || 3;
+		// ?trap=0&tdist=4 adds a hidden trap (0 Darts, 1 Snare, 2 Alarm, 3 Mess) a few tiles away, with clues on the way.
+		const wantedTrap = parseInt(params.get("trap"), 10);
+		const trapDist = parseInt(params.get("tdist"), 10) || 4;
 		if (wantedSeed > 0 || wantedDepth > 0) {
 			const timer = setInterval(() => {
 				if (memory.exports && memory.exports.debug_start) {
 					clearInterval(timer);
 					memory.exports.debug_start(wantedSeed > 0 ? wantedSeed : 1, wantedDepth > 0 ? wantedDepth : 1);
 					if (wantedHunter >= 0) memory.exports.debug_hunter(wantedHunter, wantedDist);
+					if (wantedTrap >= 0) memory.exports.debug_trap(wantedTrap, trapDist);
 				}
 			}, 50);
 		}

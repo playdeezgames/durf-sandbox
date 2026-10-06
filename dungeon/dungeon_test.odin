@@ -17,6 +17,8 @@ corridor :: proc(d: ^Delve, pc: R.Creature, pc_x: int) {
 	d.loot_count = 0
 	d.group_count = 0
 	d.groups = {}
+	d.traps = {}
+	d.trap_count = 0
 	d.room_count = 1
 	d.rooms[0] = Room{1, 5, 40, 1}
 	for x in 1 ..= 40 { d.tiles[5][x] = .Floor }
@@ -31,6 +33,11 @@ add_mob :: proc(d: ^Delve, kind: R.Monster, x: int, state: Mob_State) {
 	d.groups[d.group_count] = {size = 1, reacted = true, reaction = .Indifferent}
 	d.group_count += 1
 	d.mob_count += 1
+}
+
+add_trap :: proc(d: ^Delve, kind: R.Trap_Kind, x: int, revealed := false) {
+	d.traps[d.trap_count] = Trap{pos = {x, 5}, kind = kind, armed = true, revealed = revealed, clues = {{x - 1, 5}, {}}, clue_count = 1}
+	d.trap_count += 1
 }
 
 reachable_all :: proc(d: ^Delve, p: Pos, g: ^Grid) -> bool { return g[p.y][p.x] != INF }
@@ -489,6 +496,7 @@ events_record_reactions_pickups_drops_and_the_light_going_out :: proc(t: ^testin
 	d.event_count = 0
 	notice(&d)
 	testing.expect(t, d.event_count == 1 && d.events[0].kind == .Reaction && d.events[0].name == "Miniature goose", "a Reaction event")
+	d.mobs[0].c.alive = false // whatever it rolled, it must not hunt through the rest of this test
 	d.event_count = 0
 	d.loot[0] = Loot{pos = d.pos, item = {name = "Teapot", kind = .Lost, slots = 1, gp = 60}}
 	d.loot_count = 1
@@ -519,4 +527,211 @@ sight_is_the_torch_radius_with_line_of_sight_and_is_remembered :: proc(t: ^testi
 	d.light = 0
 	update_fov(&d)
 	testing.expect(t, d.visible[5][d.pos.x - 1] && !d.visible[5][d.pos.x - 2], "no light: one tile of sight")
+}
+
+// ---------- traps ----------
+
+@(test)
+traps_are_placed_hidden_with_clues :: proc(t: ^testing.T) {
+	d: Delve
+	for depth in 1 ..= 3 {
+		for seed in 1 ..= 300 {
+			init_delve(&d, u64(seed), depth, hardy())
+			testing.expectf(t, d.trap_count >= 1 && d.trap_count <= min(1 + depth, MAX_TRAPS), "seed %d depth %d has %d traps", seed, depth, d.trap_count)
+			for i in 0 ..< d.trap_count {
+				tr := d.traps[i]
+				testing.expect(t, tr.armed && !tr.revealed, "traps start armed and hidden")
+				testing.expect(t, d.tiles[tr.pos.y][tr.pos.x] == .Floor, "a trap is on plain floor (not the stairs)")
+				testing.expect(t, !in_start_room(&d, tr.pos), "no trap in or next to the start room")
+				testing.expect(t, tr.clue_count >= 1 && tr.clue_count <= 2, "every trap has a clue")
+				for k in 0 ..< tr.clue_count {
+					c := tr.clues[k]
+					testing.expect(t, d.tiles[c.y][c.x] == .Floor && manhattan(c, tr.pos) >= 1 && manhattan(c, tr.pos) <= 2, "a clue is on floor within two tiles")
+				}
+				for j in 0 ..< d.loot_count { testing.expect(t, d.loot[j].pos != tr.pos, "no trap under loot") }
+				for j in 0 ..< d.mob_count { testing.expect(t, d.mobs[j].pos != tr.pos, "no trap under a monster") }
+				for j in i + 1 ..< d.trap_count { testing.expect(t, d.traps[j].pos != tr.pos, "no two traps share a tile") }
+			}
+		}
+	}
+}
+
+@(test)
+trap_placement_is_deterministic :: proc(t: ^testing.T) {
+	a, b: Delve
+	init_delve(&a, 4242, 3, hardy())
+	init_delve(&b, 4242, 3, hardy())
+	testing.expect_value(t, a.trap_count, b.trap_count)
+	for i in 0 ..< a.trap_count { testing.expect(t, a.traps[i] == b.traps[i], "same seed, same traps") }
+}
+
+@(test)
+dart_trap_wounds_directly_once :: proc(t: ^testing.T) {
+	d: Delve
+	pc := hardy()
+	pc.armor = 5
+	corridor(&d, pc, 10)
+	add_trap(&d, .Darts, 11)
+	testing.expect(t, pc_move(&d, {1, 0}), "the PC steps onto the hidden trap")
+	testing.expect_value(t, d.pc.wounds, R.TRAP_DART_WOUNDS)
+	testing.expect_value(t, d.pc.armor, 5) // direct Wounds ignore Armor
+	testing.expect(t, !d.traps[0].armed && d.traps[0].revealed, "spent and visible")
+	pc_move(&d, {1, 0}); pc_move(&d, {-1, 0}); pc_move(&d, {1, 0}) // back and forth over it
+	testing.expect_value(t, d.pc.wounds, R.TRAP_DART_WOUNDS)
+}
+
+@(test)
+dart_trap_can_kill_a_weak_pc :: proc(t: ^testing.T) {
+	d: Delve
+	pc := hardy()
+	pc.hd = 1
+	pc.wounds = 20
+	corridor(&d, pc, 10)
+	add_trap(&d, .Darts, 11)
+	pc_move(&d, {1, 0})
+	testing.expect(t, d.result == .Died && d.trap_death && d.killer_trap == .Darts, "dead, killed by the trap")
+}
+
+@(test)
+snare_holds_the_pc_for_turns_and_burns_torch :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 10)
+	add_trap(&d, .Snare, 11)
+	light, turns := d.light, d.turns
+	pc_move(&d, {1, 0})
+	held := d.turns - turns
+	testing.expect(t, held >= 1 && held <= R.TRAP_SNARE_DIE, "held 1d4 Turns")
+	testing.expect_value(t, d.light, light - held)
+	testing.expect_value(t, d.pc.paralyzed, 0)
+}
+
+@(test)
+snare_with_a_hunter_close_costs_blows :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 10)
+	add_trap(&d, .Snare, 11)
+	add_mob(&d, .Dog, 14, .Hunting)
+	pc_move(&d, {1, 0})
+	attacks := 0
+	for i in 0 ..< d.event_count { if d.events[i].kind == .Attack && !d.events[i].by_pc { attacks += 1 } }
+	testing.expect(t, attacks >= 1, "at least one free attack")
+}
+
+@(test)
+alarm_wakes_the_nearest_group :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 10)
+	add_trap(&d, .Alarm, 11)
+	add_mob(&d, .Goose, 30, .Neutral)
+	add_mob(&d, .Goose, 20, .Neutral)
+	pc_move(&d, {1, 0})
+	testing.expect(t, d.mobs[1].state == .Hunting, "the nearer group hunts")
+	testing.expect(t, d.mobs[0].state == .Neutral, "the farther group sleeps on")
+}
+
+@(test)
+goo_trap_adds_stress :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 10)
+	add_trap(&d, .Mess, 11)
+	pc_move(&d, {1, 0})
+	testing.expect_value(t, d.pc.stress, R.TRAP_MESS_STRESS)
+}
+
+@(test)
+search_reveals_near_traps_and_costs_a_turn :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 10)
+	add_trap(&d, .Mess, 12) // 2 away
+	add_trap(&d, .Mess, 20) // 10 away
+	turns := d.turns
+	testing.expect(t, pc_search(&d), "searching is allowed")
+	testing.expect(t, d.traps[0].revealed, "the near trap is found")
+	testing.expect(t, !d.traps[1].revealed, "the far trap is not")
+	testing.expect_value(t, d.turns, turns + 1)
+	found := 0
+	for i in 0 ..< d.event_count { if d.events[i].kind == .Trap_Found { found += 1 } }
+	testing.expect_value(t, found, 1)
+	d.event_count = 0
+	pc_search(&d)
+	testing.expect(t, d.events[0].kind == .Search_Nothing, "a second search finds nothing new")
+}
+
+@(test)
+a_known_trap_is_not_walked_into :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 10)
+	add_trap(&d, .Darts, 11, revealed = true)
+	testing.expect(t, !pc_move(&d, {1, 0}), "refused")
+	testing.expect_value(t, d.pos.x, 10)
+	testing.expect_value(t, d.pc.wounds, 0)
+	// the pathing the bots use also refuses to step on it
+	testing.expect(t, !pc_step_toward(&d, {20, 5}, nil), "no way round in a corridor")
+}
+
+@(test)
+disarming_rolls_dex_and_failure_springs_it :: proc(t: ^testing.T) {
+	ok, bad := 0, 0
+	for seed in 1 ..= 400 {
+		d: Delve
+		corridor(&d, hardy(), 10)
+		R.rng_seed(&d.rng, u64(seed))
+		add_trap(&d, .Mess, 11, revealed = true)
+		testing.expect(t, pc_disarm(&d), "disarm is available next to a revealed trap")
+		testing.expect(t, !d.traps[0].armed, "disarmed or sprung, never left armed")
+		if d.pc.stress == 0 { ok += 1 } else { bad += 1 }
+		if d.pc.stress > 0 { testing.expect_value(t, d.pc.stress, R.TRAP_MESS_STRESS) }
+	}
+	rate := f64(ok) / 400
+	testing.expectf(t, rate > 0.30 && rate < 0.50, "DEX 3 needs a 13+ on d20 (40%%), got %.2f", rate)
+}
+
+@(test)
+disarming_needs_a_revealed_adjacent_trap :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 10)
+	add_trap(&d, .Mess, 11) // hidden
+	testing.expect(t, !pc_disarm(&d), "cannot disarm what you have not found")
+	d.traps[0].revealed = true
+	d.pos.x = 8
+	testing.expect(t, !pc_disarm(&d), "cannot disarm from two tiles away")
+}
+
+@(test)
+hunting_monsters_trigger_traps :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 3)
+	add_trap(&d, .Snare, 20)
+	add_mob(&d, .Dog, 21, .Hunting)
+	monsters_act(&d) // the dog steps toward the PC onto the snare
+	testing.expect(t, d.mobs[0].snared >= 1, "the dog is held")
+	pos := d.mobs[0].pos
+	held := d.mobs[0].snared
+	for _ in 0 ..< held { monsters_act(&d) }
+	testing.expect_value(t, d.mobs[0].pos.x, pos.x) // it did not move while held
+	monsters_act(&d)
+	testing.expect(t, d.mobs[0].pos != pos, "then it moves again")
+}
+
+@(test)
+a_dart_trap_hurts_a_hunting_monster :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 3)
+	add_trap(&d, .Darts, 20)
+	add_mob(&d, .Goose, 21, .Hunting) // 0 HD: any Wound kills
+	monsters_act(&d)
+	testing.expect(t, !d.mobs[0].c.alive, "the goose dies to the dart")
+	testing.expect_value(t, d.kills, 1)
+}
+
+@(test)
+neutral_monsters_and_wanderers_do_not_trigger_traps :: proc(t: ^testing.T) {
+	d: Delve
+	corridor(&d, hardy(), 3)
+	add_trap(&d, .Darts, 20)
+	add_mob(&d, .Dog, 21, .Neutral)
+	monsters_act(&d)
+	d.mobs[0].pos = {20, 5} // even standing on it
+	monsters_act(&d)
+	testing.expect(t, d.mobs[0].c.alive && d.traps[0].armed, "only hunters step on traps on purpose")
 }

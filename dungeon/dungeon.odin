@@ -13,6 +13,7 @@ MAX_ROOMS :: 8
 MAX_MOBS :: 24
 MAX_LOOT :: 48 // lost items plus whatever the PC drops
 MAX_GROUPS :: 24
+MAX_TRAPS :: 12
 
 SIGHT          :: 6 // tiles you can see by torchlight
 SIGHT_DARK     :: 1
@@ -20,6 +21,8 @@ LIGHT_START    :: 12 // Turns of light: two torches (a torch burns 6 Turns)
 TILES_PER_TURN :: 10 // out of combat, 10 tiles of travel is one 10 minute Turn
 RANGED_RANGE   :: 8
 ENCOUNTER_DIE  :: 6 // each Turn, a 1 brings a wandering group
+CLUE_SIGHT     :: 3 // clues can only be made out this close (and in torchlight)
+SEARCH_RADIUS  :: 4 // a search (one Turn) reveals every hidden trap this near
 
 Pos :: [2]int
 Tile :: enum u8 { Wall, Floor, Stairs }
@@ -37,6 +40,7 @@ Mob :: struct {
 	state:     Mob_State,
 	reloading: bool,
 	seen:      bool, // the PC has seen it at least once
+	snared:    int, // rounds still held by a snare
 }
 
 // Something on the floor: a lost item to fetch, or anything the PC dropped.
@@ -48,12 +52,22 @@ Loot :: struct {
 	dropped: bool, // left by the PC (never auto-fetched by the bot, never counted as found)
 }
 
+// A trap: hidden until a search finds it. It springs once (or when disarmed) and is then spent.
+Trap :: struct {
+	pos:        Pos,
+	kind:       R.Trap_Kind,
+	revealed:   bool,
+	armed:      bool,
+	clues:      [2]Pos, // marks on nearby tiles that warn of it
+	clue_count: int,
+}
+
 Room :: struct { x, y, w, h: int }
 
 Result_Kind :: enum { Running, Exited, Died }
 
 // What happened, for a log the player can read. The game layer turns these into text and drains them.
-Event_Kind :: enum { Attack, Reaction, Mob_Fled, Mob_Died, Pickup, Drop, Light_Out, Stunned, Ammo_Low, Ammo_Gone }
+Event_Kind :: enum { Attack, Reaction, Mob_Fled, Mob_Died, Pickup, Drop, Light_Out, Stunned, Ammo_Low, Ammo_Gone, Trap_Found, Search_Nothing, Trap_Sprung, Trap_Disarmed, Disarm_Failed }
 
 Event :: struct {
 	kind:     Event_Kind,
@@ -62,6 +76,8 @@ Event :: struct {
 	by_pc:    bool, // Attack: the PC attacked (else a monster attacked the PC)
 	x:        R.Exchange, // Attack: every roll
 	reaction: R.Reaction,
+	trap:     R.Trap_Kind, // Trap_*: which trap (name is the monster that sprang it; empty for the PC)
+	roll:     R.Roll, // Disarm_*: the roll
 }
 EVENT_CAP :: 64
 
@@ -95,6 +111,8 @@ Delve :: struct {
 	group_count:  int,
 	loot:         [MAX_LOOT]Loot,
 	loot_count:   int,
+	traps:        [MAX_TRAPS]Trap,
+	trap_count:   int,
 	depth:        int,
 	rng:          R.Rng,
 	pc:           R.Creature,
@@ -113,7 +131,12 @@ Delve :: struct {
 	event_count:  int,
 	explored:     [H][W]bool,
 	visible:      [H][W]bool,
-	killer:       R.Monster, // valid when result == .Died
+	killer:       R.Monster, // valid when result == .Died and trap_death is false
+	trap_death:   bool, // the PC died to a trap
+	traps_sprung: int, // on the PC (for the simulator's report)
+	traps_disarmed: int,
+	searches:     int,
+	killer_trap:  R.Trap_Kind,
 }
 
 in_bounds :: proc(p: Pos) -> bool { return p.x >= 0 && p.y >= 0 && p.x < W && p.y < H }
@@ -209,6 +232,173 @@ init_delve :: proc(d: ^Delve, seed: u64, depth: int, pc: R.Creature, push_att :=
 	for d.room_count > 1 && d.loot_count < 3 { // always something worth fetching
 		if !place_loot(d, ri(d, 1, d.room_count - 1)) { break }
 	}
+	place_traps(d)
+}
+
+// ---------- traps (house content, see DESIGN.md "Traps") ----------
+
+trap_index :: proc(d: ^Delve, p: Pos, armed_only := true) -> int {
+	for i in 0 ..< d.trap_count { if d.traps[i].pos == p && (d.traps[i].armed || !armed_only) { return i } }
+	return -1
+}
+
+in_start_room :: proc(d: ^Delve, p: Pos) -> bool {
+	r := d.rooms[0]
+	return p.x >= r.x - 1 && p.x <= r.x + r.w && p.y >= r.y - 1 && p.y <= r.y + r.h
+}
+
+// Hidden traps outside the start room, each with a clue or two on nearby floor. Depth 1 has two, one more per depth.
+place_traps :: proc(d: ^Delve) {
+	want := min(1 + d.depth, MAX_TRAPS)
+	for _ in 0 ..< want {
+		placed := false
+		for _ in 0 ..< 80 { // capped: an unbounded retry loop freezes a browser tab
+			p := Pos{ri(d, 1, W - 2), ri(d, 1, H - 2)}
+			if d.tiles[p.y][p.x] != .Floor || in_start_room(d, p) || tile_occupied(d, p) || trap_index(d, p, false) >= 0 { continue }
+			t := Trap{pos = p, kind = R.Trap_Kind(R.d(&d.rng, len(R.Trap_Kind)) - 1), armed = true}
+			for _ in 0 ..< 30 { // up to two clue tiles within two tiles, on floor that is not another trap
+				if t.clue_count >= 2 { break }
+				c := p + Pos{ri(d, -2, 2), ri(d, -2, 2)}
+				dist := manhattan(c, p)
+				if dist < 1 || dist > 2 || !in_bounds(c) || d.tiles[c.y][c.x] != .Floor || trap_index(d, c, false) >= 0 { continue }
+				if t.clue_count == 1 && t.clues[0] == c { continue }
+				t.clues[t.clue_count] = c
+				t.clue_count += 1
+			}
+			if t.clue_count == 0 { continue }
+			d.traps[d.trap_count] = t
+			d.trap_count += 1
+			placed = true
+			break
+		}
+		if !placed { break }
+	}
+}
+
+// Whether a clue mark is on this tile (for drawing), and for which trap.
+clue_at :: proc(d: ^Delve, p: Pos) -> (kind: R.Trap_Kind, ok: bool) {
+	for i in 0 ..< d.trap_count {
+		t := d.traps[i]
+		if !t.armed { continue }
+		for k in 0 ..< t.clue_count { if t.clues[k] == p { return t.kind, true } }
+	}
+	return
+}
+
+// Whether the PC can make out a clue on this tile: lit, and close.
+clue_visible :: proc(d: ^Delve, p: Pos) -> bool {
+	return in_bounds(p) && d.visible[p.y][p.x] && manhattan(d.pos, p) <= CLUE_SIGHT
+}
+
+// A revealed, armed trap on this tile: the PC will not walk into it (disarm it or go around).
+known_trap_at :: proc(d: ^Delve, p: Pos) -> bool {
+	i := trap_index(d, p)
+	return i >= 0 && d.traps[i].revealed
+}
+
+// The nearest group that is not hunting wakes up and hunts (an alarm rings, whatever its Reaction).
+wake_nearest :: proc(d: ^Delve, from: Pos, except_group: int) {
+	best, best_dist := -1, INF
+	for i in 0 ..< d.mob_count {
+		m := d.mobs[i]
+		if !m.c.alive || m.state == .Fled || m.state == .Hunting || m.group == except_group { continue }
+		if dist := manhattan(m.pos, from); dist < best_dist { best, best_dist = i, dist }
+	}
+	if best >= 0 { provoke_group(d, d.mobs[best].group) }
+}
+
+// The PC sets off trap i (stepped on it, or failed to disarm it).
+spring_on_pc :: proc(d: ^Delve, i: int) {
+	t := &d.traps[i]
+	t.armed = false
+	t.revealed = true
+	d.traps_sprung += 1
+	switch t.kind {
+	case .Darts:
+		res := R.apply_damage(&d.rng, &d.pc, R.TRAP_DART_WOUNDS, direct = true)
+		emit(d, Event{kind = .Trap_Sprung, trap = t.kind, n = res.wounds_new})
+		if !d.pc.alive { d.result = .Died; d.trap_death = true; d.killer_trap = t.kind }
+	case .Snare:
+		turns := R.d(&d.rng, R.TRAP_SNARE_DIE)
+		emit(d, Event{kind = .Trap_Sprung, trap = t.kind, n = turns})
+		helpless_turns(d, turns, hunters_strike = true)
+	case .Alarm:
+		emit(d, Event{kind = .Trap_Sprung, trap = t.kind})
+		wake_nearest(d, d.pos, -1)
+	case .Mess:
+		emit(d, Event{kind = .Trap_Sprung, trap = t.kind, n = R.push(&d.pc, R.TRAP_MESS_STRESS)})
+	}
+}
+
+// A hunting monster steps on trap i. Only seen springs are logged (an alarm is always heard).
+spring_on_mob :: proc(d: ^Delve, i, mob: int) {
+	t := &d.traps[i]
+	t.armed = false
+	seen := can_see(d, t.pos)
+	t.revealed = t.revealed || seen
+	m := &d.mobs[mob]
+	switch t.kind {
+	case .Darts:
+		res := R.apply_damage(&d.rng, &m.c, R.TRAP_DART_WOUNDS, direct = true)
+		if seen { emit(d, Event{kind = .Trap_Sprung, trap = t.kind, name = m.c.name, n = res.wounds_new}) }
+		if !m.c.alive { note_death(d, mob) }
+	case .Snare:
+		m.snared = R.d(&d.rng, R.TRAP_SNARE_DIE)
+		if seen { emit(d, Event{kind = .Trap_Sprung, trap = t.kind, name = m.c.name, n = m.snared}) }
+	case .Alarm:
+		emit(d, Event{kind = .Trap_Sprung, trap = t.kind, name = m.c.name})
+		wake_nearest(d, t.pos, m.group)
+	case .Mess:
+		if seen { emit(d, Event{kind = .Trap_Sprung, trap = t.kind, name = m.c.name}) }
+	}
+}
+
+// Search (one Turn, an action): reveals every hidden armed trap within SEARCH_RADIUS. No roll: the cost is the
+// Turn, and the clues say where to look.
+search_here :: proc(d: ^Delve) {
+	found := 0
+	d.searches += 1
+	for i in 0 ..< d.trap_count {
+		t := &d.traps[i]
+		if t.armed && !t.revealed && manhattan(t.pos, d.pos) <= SEARCH_RADIUS {
+			t.revealed = true
+			found += 1
+			emit(d, Event{kind = .Trap_Found, trap = t.kind})
+		}
+	}
+	if found == 0 { emit(d, Event{kind = .Search_Nothing}) }
+	lose_turn(d)
+}
+
+// The revealed armed trap next to the PC, if any.
+adjacent_known_trap :: proc(d: ^Delve) -> int {
+	for i in 0 ..< d.trap_count {
+		t := d.traps[i]
+		if t.armed && t.revealed && manhattan(t.pos, d.pos) == 1 { return i }
+	}
+	return -1
+}
+
+// Disarm (an action): a DEX roll over the DC, Push allowed. A failure sets it off on the PC.
+disarm_here :: proc(d: ^Delve) -> bool {
+	i := adjacent_known_trap(d)
+	if i < 0 { return false }
+	pushes := R.push(&d.pc, d.push_att)
+	x := R.roll_d20(&d.rng, R.eff_attr(d.pc, .DEX), pushes)
+	if x.success {
+		d.traps[i].armed = false
+		d.traps_disarmed += 1
+		emit(d, Event{kind = .Trap_Disarmed, trap = d.traps[i].kind, roll = x})
+	} else {
+		emit(d, Event{kind = .Disarm_Failed, trap = d.traps[i].kind, roll = x})
+		spring_on_pc(d, i)
+	}
+	return true
+}
+
+// After the PC enters a tile: an armed trap there goes off.
+pc_enter :: proc(d: ^Delve) {
+	if i := trap_index(d, d.pos); i >= 0 { spring_on_pc(d, i) }
 }
 
 // Depth rosters, weighted. The easy depth 1 roster is decision A in DESIGN.md.
@@ -481,7 +671,9 @@ mob_step :: proc(d: ^Delve, i: int, df: ^Grid) {
 		if !walkable(d, n) || n == d.pos || occupied_by_mob(d, n, i) { continue }
 		if df[n.y][n.x] < best { best = df[n.y][n.x]; to = n }
 	}
+	moved := to != m.pos
 	m.pos = to
+	if i2 := trap_index(d, m.pos); moved && i2 >= 0 { spring_on_mob(d, i2, i) }
 }
 
 can_shoot :: proc(d: ^Delve, m: Mob) -> bool {
@@ -518,10 +710,12 @@ monsters_act :: proc(d: ^Delve) {
 	bfs(d, d.pos, &df)
 	for i in 0 ..< d.mob_count {
 		m := &d.mobs[i]
+		if m.c.alive && m.snared > 0 { m.snared -= 1; continue } // held by a snare
 		if m.c.alive && m.state == .Fled { mob_flee(d, i, &df); continue }
 		if !mob_alive(m^) || m.state != .Hunting || d.result != .Running { continue }
 		adjacent := manhattan(m.pos, d.pos) == 1
 		if !adjacent && !can_shoot(d, m^) { mob_step(d, i, &df) } // the move
+		if m.snared > 0 || !m.c.alive { continue } // sprang a snare (or a dart trap) on the way
 		adjacent = manhattan(m.pos, d.pos) == 1
 		switch { // the action
 		case .Stun_Call in m.c.abilities && !m.c.stun_used && adjacent:
@@ -554,8 +748,19 @@ paralyse :: proc(d: ^Delve, by: int, turns: int) {
 	for i in 0 ..< d.mob_count {
 		if d.mobs[i].group == g && d.mobs[i].c.alive && d.mobs[i].state != .Fled { d.mobs[i].state = .Neutral }
 	}
+	helpless_turns(d, turns)
+}
+
+helpless_turns :: proc(d: ^Delve, turns: int, hunters_strike := false) {
 	for t in 1 ..= turns {
 		d.pc.paralyzed = turns - t + 1
+		if hunters_strike { // hunters nearby get one free attack per Turn held
+			for i in 0 ..< d.mob_count {
+				m := d.mobs[i]
+				if d.pc.alive && mob_alive(m) && m.state == .Hunting && manhattan(m.pos, d.pos) <= COMBAT_RANGE { mob_attack(d, i) }
+			}
+			if !d.pc.alive { break }
+		}
 		first_new := d.mob_count
 		lose_turn(d)
 		if d.mob_count > first_new && d.mobs[first_new].state == .Hunting {
@@ -626,6 +831,7 @@ pc_step_toward :: proc(d: ^Delve, dest: Pos, avoid: ^Blocked) -> bool {
 	if d.pos == dest { return false }
 	blocked: Blocked
 	for i in 0 ..< d.mob_count { if blocks_pc(d.mobs[i]) { blocked[d.mobs[i].pos.y][d.mobs[i].pos.x] = true } }
+	for i in 0 ..< d.trap_count { if d.traps[i].armed && d.traps[i].revealed { blocked[d.traps[i].pos.y][d.traps[i].pos.x] = true } }
 	if avoid != nil { for y in 0 ..< H { for x in 0 ..< W { if avoid[y][x] { blocked[y][x] = true } } } }
 	blocked[dest.y][dest.x] = false
 	g: Grid
@@ -642,6 +848,7 @@ pc_step_toward :: proc(d: ^Delve, dest: Pos, avoid: ^Blocked) -> bool {
 		if d.mobs[i].c.alive && d.mobs[i].state == .Neutral && d.mobs[i].pos == to { d.mobs[i].pos = d.pos }
 	}
 	d.pos = to
+	pc_enter(d)
 	return true
 }
 
@@ -709,7 +916,7 @@ round_move :: proc(d: ^Delve, dest: Pos, avoid: ^Blocked = nil) {
 	order := Move_Order{dest, avoid}
 	round(d, proc(d: ^Delve, ctx: rawptr) {
 		o := cast(^Move_Order)ctx
-		if pc_step_toward(d, o.dest, o.avoid) { pc_step_toward(d, o.dest, o.avoid) }
+		if pc_step_toward(d, o.dest, o.avoid) && d.result == .Running && d.pc.paralyzed == 0 { pc_step_toward(d, o.dest, o.avoid) }
 	}, &order)
 }
 
@@ -742,6 +949,16 @@ round_pickup :: proc(d: ^Delve) {
 round_drop :: proc(d: ^Delve, idx: int) {
 	order := Item_Order{idx}
 	round(d, proc(d: ^Delve, ctx: rawptr) { drop_item(d, (cast(^Item_Order)ctx).idx) }, &order)
+}
+
+// The PC's action: search for traps (costs a Turn).
+round_search :: proc(d: ^Delve) {
+	round(d, proc(d: ^Delve, ctx: rawptr) { search_here(d) }, nil)
+}
+
+// The PC's action: disarm the revealed trap next to it, if there is one.
+round_disarm :: proc(d: ^Delve) {
+	round(d, proc(d: ^Delve, ctx: rawptr) { disarm_here(d) }, nil)
 }
 
 // Leave by the stairs, banking what is carried. Only valid on the stairs tile.
@@ -788,7 +1005,7 @@ attackable :: proc(d: ^Delve, i: int) -> (ok: bool, shot: bool) {
 pc_move :: proc(d: ^Delve, dir: Pos) -> bool {
 	if d.result != .Running { return false }
 	to := d.pos + dir
-	if !walkable(d, to) { return false }
+	if !walkable(d, to) || known_trap_at(d, to) { return false }
 	if d.rd.active && d.rd.move_left + d.rd.action_left <= 0 { return false }
 	if i := mob_at(d, to); i >= 0 && blocks_pc(d.mobs[i]) { return pc_attack(d, i) }
 	start_round(d)
@@ -797,6 +1014,7 @@ pc_move :: proc(d: ^Delve, dir: Pos) -> bool {
 		if d.mobs[i].c.alive && d.mobs[i].state == .Neutral && d.mobs[i].pos == to { d.mobs[i].pos = d.pos }
 	}
 	d.pos = to
+	pc_enter(d)
 	spend(d, true)
 	return true
 }
@@ -831,6 +1049,26 @@ pc_do_drop :: proc(d: ^Delve, idx: int) -> bool {
 	start_round(d)
 	if d.result != .Running { end_round(d); return true }
 	drop_item(d, idx)
+	spend(d, false)
+	return true
+}
+
+// Search for hidden traps near the PC: the round's action, and a Turn passes.
+pc_search :: proc(d: ^Delve) -> bool {
+	if d.result != .Running || (d.rd.active && d.rd.action_left <= 0) { return false }
+	start_round(d)
+	if d.result != .Running { end_round(d); return true }
+	search_here(d)
+	spend(d, false)
+	return true
+}
+
+// Disarm the revealed trap next to the PC: the round's action. False (nothing spent) if there is none.
+pc_disarm :: proc(d: ^Delve) -> bool {
+	if d.result != .Running || (d.rd.active && d.rd.action_left <= 0) || adjacent_known_trap(d) < 0 { return false }
+	start_round(d)
+	if d.result != .Running { end_round(d); return true }
+	disarm_here(d)
 	spend(d, false)
 	return true
 }

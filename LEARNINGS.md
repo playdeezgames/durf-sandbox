@@ -97,7 +97,7 @@ A running log of what to reuse or avoid in the real jam. Newest at the bottom.
 - **Serve with no-cache headers during playtests.** The plain `python3 -m http.server` lets the browser keep a stale `game.wasm`, so the user played the original build while I shipped fixes. `tools/serve.py` sends `Cache-Control: no-store`. Tell the tester how to hard-reload anyway.
 - **A rule with one verb can leave a gap.** Neutral monsters swap places, hunters are bump-attacked, so a friendly dog could never be attacked. Every state of a thing the player can reach needs a way to interact (here an explicit attack key).
 - **Hints must be generated from the key map, or they drift** (the drop hint said D while the key was X). A cheap guard: one table of key names used by both the handler and the text.
-- Traps are planned as Spike C (`todo/spike-c-traps.md`). The DURF 2.2 text has no trap rules, so they are our own design (flag as house content); a Turn already means "search a room or pick a lock".
+- Traps were planned as Spike C (`todo/spike-c-traps.md`) and built Oct 6 (see below). The DURF 2.2 text has no trap rules, so they are our own design (flagged as house content).
 
 ## Product owner's verdict on Spike B (Oct 6)
 
@@ -106,3 +106,15 @@ A running log of what to reuse or avoid in the real jam. Newest at the bottom.
 - **Menu-driven inventory and actions.** The player should never have to remember hotkeys. Pick up, drop, equip, push, attack and the like come from on-screen menus (items listed with their slots, choices next to the thing they act on). Hotkeys can stay as shortcuts, but every action must be reachable from a menu.
 - **Minimal keypresses.** Count presses per common action (pick up and drop need several here: G or X, then a digit, then Enter) and design them to cost as few as possible: context actions on the thing in front of you, one confirm, sensible defaults, auto-pickup of lost items.
 - Practice-build hint text and the QA hooks are not a substitute: a discoverable UI is a jam requirement because jam players try a game for a few minutes.
+- **Fonts for the jam game:** no font swap in the practice build (product owner, Oct 6). Candidates are in the vault (`Tech/Small bitmap fonts.md`): m3x6, m5x7, m6x11 by Daniel Linssen (credit him), proportional, designed for a 16 px em.
+
+## Spike C: traps (Oct 6)
+
+- **What was built:** four trap kinds with clues, an explicit search (a Turn) and disarm (DEX roll), monsters that trigger traps, bots that search or ignore, game keys E and C, a QA hook `?trap=<kind>&tdist=<tiles>`. 47 dungeon tests, 16 game tests. Findings in `DESIGN.md` ("Traps").
+- **Process:** five design questions asked one at a time, then built in one go. One small decision was made by the builder and flagged in the TODO (no roll on search). Ask about such defaults before building if the product owner would care.
+- **A rule that removes the save moves the burden to the clue.** With no save, a fair trap needs a readable warning near it; the placement code guarantees at least one clue tile per trap and a test checks it.
+- **A held PC needs its hunters to keep acting.** A snare that only burns Turns is harmless when something is chasing you. Hunters within range get one free attack per Turn held (same shape as the wanderer rule for the gecko stun).
+- **Odin gotcha:** `for _ in 0 ..< d.mobs[0].snared { ... }` re-reads the bound every iteration when the loop body changes it, so the loop ran about half as often as expected. Copy the bound into a local first.
+- **Tests that depend on a Reaction roll are fragile:** a new RNG draw earlier in generation changed a test's goose from Neutral to hostile and broke an unrelated test. Tests should force the state they need rather than rely on a lucky seed.
+- **Search radius vs clue range:** clues sit within 2 tiles of a trap and the bot searches when a clue is within 4 tiles, so the search radius is 4. If the radius is shorter than the clue range, a player can see a clue, search, and still miss the trap.
+- **First playtest of traps:** the clue was far too obvious (bright red, visible across the room). Draw hints at the strength you want them noticed, not at the strength that makes them easy to verify in a screenshot; I made it too visible for my own QA. It is now a faint stain drawn only within 3 tiles. The bot and the player now share one `clue_visible` rule, so the simulator measures what a person can see.

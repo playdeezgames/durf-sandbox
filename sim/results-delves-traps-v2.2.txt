@@ -1,0 +1,44 @@
+DURF rules 2.2. Whole delves on the grid, 400 per cell, a fresh random starting character each.
+Cell = survived% / gold banked per delve / XP per delve (XP = gold returned + kills; a death banks nothing)
+Retreat is the book's: a second move at the same speed, no free attack.
+
+######## Depth 1 ########
+                              Dagger                Sword                 Sword+Light           Sword+Med+Shield      Bow+Light             
+Brave (fights everything)     24% / 063 / 066       25% / 062 / 066       40% / 100 / 107       64% / 138 / 152       81% / 160 / 179       
+Careful (flees big threats)   69% / 176 / 179       71% / 179 / 183       83% / 210 / 216       90% / 196 / 204       91% / 226 / 234       
+Careful, never drops          71% / 173 / 177       72% / 139 / 143       80% / 140 / 145       91% / 066 / 074       92% / 125 / 133       
+Careful + pushes              78% / 201 / 206       77% / 193 / 197       85% / 214 / 221       93% / 201 / 210       92% / 222 / 231       
+Coward (flees any hunter)     93% / 155 / 156       93% / 154 / 155       96% / 154 / 156       99% / 147 / 148       97% / 151 / 152       
+Careful + searches for traps  73% / 171 / 174       73% / 170 / 173       84% / 197 / 201       92% / 186 / 193       92% / 212 / 219       
+
+######## Depth 2 ########
+                              Dagger                Sword                 Sword+Light           Sword+Med+Shield      Bow+Light             
+Brave (fights everything)     06% / 016 / 017       07% / 019 / 020       12% / 034 / 037       16% / 049 / 054       41% / 075 / 090       
+Careful (flees big threats)   56% / 186 / 187       57% / 188 / 189       62% / 210 / 211       72% / 214 / 216       68% / 232 / 234       
+Careful, never drops          55% / 174 / 176       55% / 153 / 155       60% / 139 / 141       72% / 074 / 077       66% / 135 / 138       
+Careful + pushes              62% / 210 / 213       58% / 192 / 194       65% / 208 / 210       74% / 221 / 224       70% / 225 / 227       
+Coward (flees any hunter)     68% / 198 / 199       67% / 193 / 194       74% / 209 / 210       82% / 204 / 205       73% / 196 / 196       
+Careful + searches for traps  62% / 181 / 182       64% / 186 / 187       69% / 199 / 201       77% / 207 / 210       74% / 225 / 228       
+
+######## Depth 3 ########
+                              Dagger                Sword                 Sword+Light           Sword+Med+Shield      Bow+Light             
+Brave (fights everything)     04% / 012 / 012       04% / 011 / 011       07% / 041 / 044       08% / 040 / 043       27% / 069 / 081       
+Careful (flees big threats)   60% / 314 / 314       62% / 317 / 318       70% / 351 / 352       80% / 347 / 348       72% / 336 / 336       
+Careful, never drops          62% / 303 / 303       61% / 256 / 257       70% / 253 / 254       78% / 118 / 119       70% / 188 / 189       
+Careful + pushes              64% / 324 / 324       61% / 308 / 309       73% / 366 / 367       80% / 359 / 360       72% / 333 / 334       
+Coward (flees any hunter)     63% / 297 / 297       65% / 302 / 303       74% / 335 / 336       83% / 333 / 333       74% / 324 / 324       
+Careful + searches for traps  67% / 328 / 329       67% / 321 / 321       75% / 345 / 345       84% / 355 / 355       76% / 349 / 349       
+
+Depth 1 floors, Careful (flees big threats): 8.0 rooms, 4.9 lost items worth 467 GP; returned 2.5 items (visited 5.1 rooms, saw 2.1 items, 0.8 slots free at the end)
+Depth 1 floors, Careful, never drops: 8.0 rooms, 4.9 lost items worth 467 GP; returned 1.8 items (visited 5.2 rooms, saw 3.0 items, 0.8 slots free at the end)
+Depth 1, Careful (flees big threats), Sword+Light: endings Died=72 Home_done=114 Home_light=90 Home_hurt=3 Home_fled=118 Home_stuck=1 Timeout=2; killers Miniature goose=7 Dog=55 Echo Gecko=7 traps=3
+Depth 2, Careful (flees big threats), Sword+Light: endings Died=156 Home_done=65 Home_light=42 Home_hurt=4 Home_fled=133; killers Dog=12 Echo Gecko=3 Myconid=5 Eelfolk=46 Spellclaw=2 Shadow=5 Blowpipe Imp=43 Crossbow Cultist=26 traps=14
+Depth 3, Careful (flees big threats), Sword+Light: endings Died=114 Home_done=44 Home_light=37 Home_hurt=6 Home_fled=199; killers Myconid=2 Eelfolk=36 Spellclaw=7 Shadow=3 Flesh Orb of Zuld=7 Blowpipe Imp=14 Crossbow Cultist=35 traps=10
+
+Traps (Sword+Light kit): sprung on the PC, disarmed, searches, deaths by trap, survival, Turns used, gold
+Depth 1, Careful (flees big threats)    sprung 0.48, disarmed 0.00, searches 0.00, trap deaths 0.8%, survived 83%, Turns 9.9, gold 216
+Depth 1, Careful + searches for traps   sprung 0.26, disarmed 0.10, searches 1.07, trap deaths 0.2%, survived 84%, Turns 9.7, gold 193
+Depth 2, Careful (flees big threats)    sprung 0.53, disarmed 0.00, searches 0.00, trap deaths 3.5%, survived 60%, Turns 6.6, gold 198
+Depth 2, Careful + searches for traps   sprung 0.28, disarmed 0.12, searches 1.37, trap deaths 1.5%, survived 69%, Turns 7.2, gold 206
+Depth 3, Careful (flees big threats)    sprung 0.65, disarmed 0.00, searches 0.00, trap deaths 2.5%, survived 70%, Turns 5.8, gold 352
+Depth 3, Careful + searches for traps   sprung 0.36, disarmed 0.16, searches 1.63, trap deaths 1.8%, survived 76%, Turns 6.7, gold 356

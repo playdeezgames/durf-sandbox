@@ -139,9 +139,18 @@ A playable build now exists: `./build.sh`, then serve `build/web`. Keys: arrows 
 5. **Walking home by hand is tedious**, so a `T` key walks to the stairs and stops when anything happens (a fight, a Reaction, a pick-up). It also keeps retreat cheap to test.
 6. **Things to watch in the next round of play**: how it feels to be paralysed by a gecko (lost Turns appear only as a torch drop), how readable the fog is with the loud orange floor, whether the 33-character log forces too many abbreviations, and whether the start screen explains enough (it says "Fighting rarely pays. Run.").
 
-## Planned: traps (Spike C)
+## Traps (Spike C, built Oct 6)
 
-Added to the plan Oct 5 at the product owner's request: dungeon traps, with ways to detect and disable them, to be figured out later. The DURF 2.2 text has no trap rules (only a magic bear trap item), so traps are our own design built from the book's parts: a Turn is the time to search a room or pick a lock, saves are d20 + attribute over 15, and direct Wounds ignore Armor. The open design questions and the work list are in `todo/spike-c-traps.md`. Traps must fit decision D (avoidance is the game): they reward care, they are never mandatory, and under permadeath they should come with a fair chance (a clue or a save).
+The DURF 2.2 text has no trap rules (only a magic bear trap item), so traps are our own design, built from the book's parts and flagged as house content (`rules/data.odin`: `TRAPS`, `TRAP_*`). Decided with the product owner, one question at a time:
+
+- **Four kinds, one effect each:** Dart trap (1 direct Wound, ignores Armor), Snare (1d4 Turns held; hunters within range get a free attack per Turn), Alarm (the nearest group that is not hunting hunts you, whatever its Reaction), Goo trap (2 Stress, which takes bag slots until rest).
+- **Hidden until searched, with clues.** Each trap has one or two clue marks on floor within two tiles. A clue is drawn as a **faint stain, only within 3 tiles of you and in torchlight** (`CLUE_SIGHT`; the first version was a bright red mark visible from across the room, which the product owner found far too obvious). The search key (E) costs the round's action and a Turn (torch burns, wanderer d6) and reveals every hidden trap within 4 tiles. **No roll on a search** (a builder's default, flagged in the TODO; the book has "search a room" as a Turn and no roll).
+- **No save: clues are the defence.** Stepping on a hidden trap always triggers it. Traps are single-use.
+- **A found trap is not walked into.** Walk around it, or disarm it (C, adjacent): a DEX roll over 15 (Push allowed). A failed disarm sets it off. Disarmed traps stay harmless.
+- **Hunting monsters trigger traps** they step on: a dart wounds, a snare holds them for 1d4 rounds, an alarm wakes another group. Wanderers and neutrals that are not hunting do not.
+- **Placement:** `1 + depth` traps, never in or next to the start room, never under loot or a monster, each with a clue.
+- **Simulator** (`sim/results-delves-traps-v2.2.txt`, Sword+Light, 400 runs): a bot that ignores traps springs about 0.5 per delve (0.65 at depth 3) and dies to darts 0.8% of delves at depth 1, 3.5% at depth 2, 2.5% at depth 3. A bot that searches when it sees a clue and disarms what it finds roughly halves that (0.26 to 0.36 sprung) and survives 1 to 9 points more (84% against 83% at depth 1, 69% against 60% at depth 2, 76% against 70% at depth 3), at the cost of 1 to 1.6 searches (a Turn each) and, at depth 1, about 10% of the gold (depths 2 and 3 are even). So traps matter, but modestly: care costs a little, carelessness costs lives.
+- **Not built:** hirelings finding traps, a trap tool in the shop, per-kind clues, a search roll.
 
 ## Source material: the DURF Collection
 
@@ -294,6 +303,8 @@ The product owner called the practice build "a little demo". In the real jam gam
 
 - **A menu-driven inventory** (and menu-driven actions generally), so no hotkeys have to be remembered.
 - **Minimal keypresses** for everything common.
+
+- **Fonts:** the practice build keeps the Urizen bitmap text; **no font swap here**. For the jam game the vault now has Daniel Linssen's m3x6, m5x7 and m6x11 (TTF plus 16 by 6 sheets; credit him), see the vault note `Tech/Small bitmap fonts.md`. m5x7 at 2x is the likely body text. Work out the text rendering (proportional advances, sheet or `@font-face`) then.
 
 The practice build keeps its hotkeys (G, X, Z, P, T and digits); this is recorded here and in `LEARNINGS.md`, not a TODO for this repo.
 
