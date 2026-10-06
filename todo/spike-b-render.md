@@ -49,5 +49,5 @@ Goal: let a person play the delve engine, to learn how the avoidance game feels 
 - [x] Round refactor checked bit for bit: the delve simulator output is identical before and after
 - [x] Headless Chrome screenshots (`google-chrome --headless=new ... --screenshot`)
 - [x] Played delves in the browser pane: walking, fog, pick up, drop menu, office, shop, fights, deaths
-- [ ] A full human playtest by the product owner (the point of the spike)
+- [x] A full human playtest by the product owner (the point of the spike). Verdict Oct 6: works as a little demo; the jam game needs menu-driven inventory and minimal keypresses (see `LEARNINGS.md`, `DESIGN.md`)
 - [x] Record findings in `LEARNINGS.md`

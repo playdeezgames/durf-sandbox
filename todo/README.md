@@ -8,4 +8,4 @@ Each spike has its own file here, with `- [ ]` checkboxes. Tick a box (`- [x]`) 
 | `spike-a2-delves-on-a-grid.md` | A2: delve engine and delve bot | done |
 | `spike-a3-apply-decisions.md` | A3: apply the decisions, rerun the simulators | done |
 | `spike-c-traps.md` | C: traps, with detection and disarming | planned (design decisions needed first) |
-| `spike-b-render.md` | B: render the delve in the browser | built, awaiting the product owner's playtest |
+| `spike-b-render.md` | B: render the delve in the browser | built and playtested (a good demo; jam-game UI notes recorded) |

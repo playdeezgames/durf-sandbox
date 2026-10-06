@@ -98,3 +98,11 @@ A running log of what to reuse or avoid in the real jam. Newest at the bottom.
 - **A rule with one verb can leave a gap.** Neutral monsters swap places, hunters are bump-attacked, so a friendly dog could never be attacked. Every state of a thing the player can reach needs a way to interact (here an explicit attack key).
 - **Hints must be generated from the key map, or they drift** (the drop hint said D while the key was X). A cheap guard: one table of key names used by both the handler and the text.
 - Traps are planned as Spike C (`todo/spike-c-traps.md`). The DURF 2.2 text has no trap rules, so they are our own design (flag as house content); a Turn already means "search a room or pick a lock".
+
+## Product owner's verdict on Spike B (Oct 6)
+
+"It works for a little demo." Not the shape of a real game. **For the jam game, build these in from the start** (they are deliberately not being retrofitted into the practice build):
+
+- **Menu-driven inventory and actions.** The player should never have to remember hotkeys. Pick up, drop, equip, push, attack and the like come from on-screen menus (items listed with their slots, choices next to the thing they act on). Hotkeys can stay as shortcuts, but every action must be reachable from a menu.
+- **Minimal keypresses.** Count presses per common action (pick up and drop need several here: G or X, then a digit, then Enter) and design them to cost as few as possible: context actions on the thing in front of you, one confirm, sensible defaults, auto-pickup of lost items.
+- Practice-build hint text and the QA hooks are not a substitute: a discoverable UI is a jam requirement because jam players try a game for a few minutes.

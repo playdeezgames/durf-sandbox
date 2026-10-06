@@ -288,6 +288,15 @@ A headless bot plays thousands of delves per depth with simple policies (never p
 
 Still to find: Dragon, Flesh Orb (try the sci-fi section, columns 78 to 103, and columns 130 to 205 monsters), stairs, torch, gold, scroll. `tools/sheet.py c0 c1 r0 r1 out.png` makes a labelled contact sheet.
 
+## Notes for the jam game (from the Spike B playtest, Oct 6)
+
+The product owner called the practice build "a little demo". In the real jam game:
+
+- **A menu-driven inventory** (and menu-driven actions generally), so no hotkeys have to be remembered.
+- **Minimal keypresses** for everything common.
+
+The practice build keeps its hotkeys (G, X, Z, P, T and digits); this is recorded here and in `LEARNINGS.md`, not a TODO for this repo.
+
 ## Milestones (plan; spikes marked)
 
 0. **Design sign-off** (this document, plus answers to the open questions below).
