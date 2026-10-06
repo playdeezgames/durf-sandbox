@@ -6,11 +6,11 @@ Working title: "Lost & Found of SPLORR!!". You work at a Lost Property Office an
 
 ## Status
 
-A playable prototype in the browser, built from three prototype spikes:
+**The practice is concluded (Oct 6, 2026): a proof of concept, not to be extended; further work waits for the real jam.** A playable prototype in the browser, built from prototype spikes A, A2, A3, B and C (traps):
 
 - `rules/`: a pure Odin DURF v2.2 rules engine (dice, Buffs and Breaks, opposed combat, Stress and slots, damage and HD death, morale, reaction, XP, character creation, inventory, Ammo). 25 native tests.
-- `dungeon/`: a seeded delve engine (floors, sight, Reaction on sight, chase and flee, the Turn clock and torch, wandering monsters, pick up and drop against the slot limit, Ammo, gecko paralysis). 32 native tests.
-- `src/` and `web/`: the game layer (screens, keys, banking, a shop, a readable roll log) and the 2D canvas build. 11 native tests.
+- `dungeon/`: a seeded delve engine (floors, sight, Reaction on sight, chase and flee, the Turn clock and torch, wandering monsters, pick up and drop against the slot limit, Ammo, gecko paralysis). 47 native tests, including traps with clues, search and disarm.
+- `src/` and `web/`: the game layer (screens, keys, banking, a shop, a readable roll log) and the 2D canvas build. 16 native tests.
 - `sim/`: bots that play thousands of fights and whole delves. Results are in `sim/results-*.txt`.
 
 Work is tracked per spike in `todo/`. Read `DESIGN.md` for the design, the decisions made so far and the findings, and `LEARNINGS.md` for lessons for the jam. `CLAUDE.md` is the guide for Claude Code sessions, including a future jam session that references this project.

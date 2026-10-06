@@ -9,7 +9,7 @@ A **practice project** for [DURF Jam 6](https://itch.io/jam/durf-jam-6) (Oct 14 
 - **Rules target for the practice: DURF core rules.** For the jam we may reconsider (for example DURF Expanded). The 2.2 PDF is in `durf-reference/`; the current release is v2.4 (decision 8 in `DESIGN.md`: built on 2.2 with every number in `rules/data.odin`; **2.4 no longer matters for this prototype**, the jam may reconsider).
 - **Work tracking:** one TODO file per spike in `todo/`, with `- [ ]` checkboxes (see `todo/README.md`). Tick boxes as work is done and verified, add boxes as you discover work, and keep `todo/README.md`'s state column current.
 - Status and plan: **`DESIGN.md`** (source of truth: rules digest, design, architecture, milestones, open questions). Running log of lessons: **`LEARNINGS.md`**.
-- Phase: design decisions are made (see the decision log in `DESIGN.md`); spikes A, A2, A3, B (a playable browser build, playtested Oct 6: "works for a little demo") and C (traps, built Oct 6, awaiting playtest) are done; the product owner's notes for the real jam game (menu-driven inventory, minimal keypresses) are in `DESIGN.md` and `LEARNINGS.md`. The user still wants design and plan first for new areas; spikes are fine.
+- Phase: design decisions are made (see the decision log in `DESIGN.md`); spikes A, A2, A3, B (a playable browser build, playtested Oct 6: "works for a little demo") and C (traps, built and playtested Oct 6) are done. **The practice is concluded as a proof of concept (Oct 6); further work waits for the real jam, so do not extend this repo unless asked.** The product owner's notes for the real jam game (menu-driven inventory, minimal keypresses) are in `DESIGN.md` and `LEARNINGS.md`. The user still wants design and plan first for new areas; spikes are fine.
 - **Key findings to remember:** dropping junk dissolves the bag limit and the torch becomes the binding limit; ranged monsters make depth matter; the book's Ammo rule barely limits a kiting bow. And, from A1: under the book's rules combat is lethal and never pays; avoidance (running at equal speed, Reaction, light, the bag) is the game.
 
 ## If you are the jam project's session
@@ -25,12 +25,12 @@ A **practice project** for [DURF Jam 6](https://itch.io/jam/durf-jam-6) (Oct 14 
 | Part | Where | Status |
 | --- | --- | --- |
 | Odin wasm build script | `build.sh` | copied from `/home/yermom/git/tggd_jamference2/`, unmodified |
-| 2D canvas shim with tileset knock-out, tint modes | `web/index.html` (not yet copied) | planned, from the same repo |
+| 2D canvas shim with tileset knock-out, tint modes | `web/index.html` (with the QA URL hooks `?seed=&depth=&hunter=&trap=`) | **built**, adapted from the earlier repo |
 | Tileset contact-sheet tool | `tools/sheet.py` | works; usage in `LEARNINGS.md` |
 | Urizen tileset | `assets/tileset.png` | copy of the vault's sheet (CC0, credit vurmux) |
 | DURF v2.2 rules engine: seeded RNG, Buffs/Breaks, opposed combat, inventory of items with slots, equipment derived from the bag, Stress, Ammo, damage, HD death, morale, reaction, XP, character creation | `rules/` (package `rules`; numbers in `rules/data.odin`) | **built**, 25 passing native tests (mutation-checked) |
 | Dungeon/delve engine: seeded floor generation, line of sight, Reaction on sight, chase and flee (a move plus an action per round), Turn clock and torch, wandering encounters, explicit pick up and drop against the slot limit, Ammo check after fights, gecko paralysis as lost Turns, bump-swap with neutrals | `dungeon/` (package `dungeon`, imports `../rules`) | **built**, 47 passing native tests (including traps) |
-| Playable browser build: game layer (screens, keys, banking, shop, log text), canvas shim, drawing, QA URL hooks | `src/game.odin` (pure, 11 native tests), `src/web.odin` (`#+build js`), `web/index.html`, `build.sh` | **built** (Spike B), awaiting a human playtest |
+| Playable browser build: game layer (screens, keys, banking, shop, log text), canvas shim, drawing, QA URL hooks | `src/game.odin` (pure, 16 native tests), `src/web.odin` (`#+build js`), `web/index.html`, `build.sh` | **built** (Spike B) and playtested; traps (Spike C) added |
 | Labelled contact sheet of the sprites in use | `tools/sprites.py` | works |
 | Simulator bots: abstract fights (`fights`) and whole delves on the grid with four policies (`delves`) | `sim/`, results in `sim/results-fights-v2.2.txt` and `sim/results-delves-v2.2.txt` | **built**; no spells, no hirelings, bot knows the room layout; `sim trace` and `sim delves debug` (replays timeouts with a trace) help find stuck bots |
 
